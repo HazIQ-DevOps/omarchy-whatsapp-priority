@@ -32,6 +32,11 @@ Panel {
   property bool refreshing: false
   property string peekImagePath: ""
   readonly property bool peekActive: peekImagePath.length > 0
+  property string pendingImagePath: ""
+  property string pendingImageMime: ""
+  property string pendingImageJid: ""
+  property string pasteRequestJid: ""
+  property bool imageSending: false
 
   readonly property var chats: client ? client.chats : []
   readonly property bool daemonOnline: client ? client.daemonOnline : false
@@ -174,9 +179,20 @@ Panel {
 
   function sendReply() {
     var text = composer.text
-    if (!text || !text.trim().length) return
+    var hasPendingImage = root.pendingImagePath.length > 0 && root.pendingImageJid === root.activeJid
+    if ((!text || !text.trim().length) && !hasPendingImage) return
     if (!root.client || !root.client.ready) {
       root.statusLine = "Not connected to WhatsApp"
+      return
+    }
+    if (hasPendingImage) {
+      if (root.imageSending) return
+      if (root.client.sendImage(root.activeJid, root.pendingImagePath, root.pendingImageMime, text)) {
+        root.imageSending = true
+        root.statusLine = "Sending image\u2026"
+      } else {
+        root.statusLine = "Could not send the image"
+      }
       return
     }
     if (root.client.sendMessage(root.activeJid, text)) {
@@ -186,6 +202,56 @@ Panel {
       root.client.setTyping(root.activeJid, "paused")
     }
   }
+
+  function clearPendingImage(deleteFile) {
+    var path = root.pendingImagePath
+    root.pendingImagePath = ""
+    root.pendingImageMime = ""
+    root.pendingImageJid = ""
+    root.imageSending = false
+    if (deleteFile && path)
+      Quickshell.execDetached([root.pluginDir + "/bin/omarchy-whatsapp-paste-image", "delete", path])
+  }
+
+  function pasteImageOrText() {
+    if (clipboardCapture.running || root.imageSending) return
+    root.pasteRequestJid = root.activeJid
+    clipboardCapture.running = true
+  }
+
+  function handleClipboardCapture(output) {
+    var result
+    try { result = JSON.parse(output) }
+    catch (err) { root.statusLine = "Could not read the clipboard"; return }
+    if (result.kind === "none") {
+      if (root.view === "chat" && root.activeJid === root.pasteRequestJid) composer.paste()
+      return
+    }
+    if (result.kind === "error") {
+      root.statusLine = result.message || "Could not paste the image"
+      return
+    }
+    if (result.kind !== "image" || !result.path || !result.mime) return
+    if (root.view !== "chat" || root.activeJid !== root.pasteRequestJid) {
+      Quickshell.execDetached([root.pluginDir + "/bin/omarchy-whatsapp-paste-image", "delete", result.path])
+      return
+    }
+    root.clearPendingImage(true)
+    root.pendingImagePath = result.path
+    root.pendingImageMime = result.mime
+    root.pendingImageJid = root.activeJid
+    root.statusLine = "Image ready to send"
+  }
+
+  onActiveJidChanged: {
+    if (root.pendingImagePath && root.pendingImageJid !== root.activeJid && !root.imageSending)
+      root.clearPendingImage(true)
+  }
+  onViewChanged: {
+    if (root.view !== "chat" && root.pendingImagePath && !root.imageSending)
+      root.clearPendingImage(true)
+  }
+  Component.onDestruction: if (root.pendingImagePath && !root.imageSending) root.clearPendingImage(true)
 
   function openWebClient() {
     webLauncher.running = true
@@ -304,8 +370,22 @@ Panel {
       root.patchMessage(messageId, { imagePath: imagePath })
     }
 
+    function onImageSendAcknowledged(jid) {
+      if (jid !== root.pendingImageJid || !root.imageSending) return
+      root.clearPendingImage(false)
+      composer.clear()
+      root.statusLine = ""
+      typingTimer.stop()
+      root.client.setTyping(jid, "paused")
+    }
+
     function onCommandFailed(command, message) {
       if (command === "send") root.statusLine = message
+      if (command === "sendImage") {
+        root.imageSending = false
+        root.statusLine = message || "Could not send the image"
+        if (root.pendingImageJid !== root.activeJid) root.clearPendingImage(true)
+      }
       if (command === "refresh") {
         root.refreshing = false
         refreshWatchdog.stop()
@@ -334,6 +414,17 @@ Panel {
   Process {
     id: webLauncher
     command: [root.pluginDir + "/bin/omarchy-whatsapp-open", root.setting("webAppUrl", "https://web.whatsapp.com")]
+  }
+
+  Process {
+    id: clipboardCapture
+    command: [root.pluginDir + "/bin/omarchy-whatsapp-paste-image", "capture"]
+    stdout: StdioCollector {
+      onStreamFinished: function (output) { root.handleClipboardCapture(output) }
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0) root.statusLine = "Could not read the clipboard image"
+    }
   }
 
   Process {
@@ -820,7 +911,7 @@ Panel {
                 // width depend on content that depends on the bubble: a binding
                 // loop, which collapses every bubble to a few pixels.
                 readonly property real maxInner: Math.max(Style.space(60), bubbleRow.width * 0.82 - bubbleRow.pad * 2)
-                readonly property bool hasImage: messageRow.modelData.imagePath
+                readonly property bool hasImage: !!messageRow.modelData.imagePath
                   && String(messageRow.modelData.imagePath).length > 0
                 readonly property bool showBody: {
                   var text = messageRow.modelData.text || ""
@@ -960,43 +1051,112 @@ Panel {
           }
 
           // ── Inline reply ───────────────────────────────────────────────
-          Item {
+          Column {
             width: parent.width
-            implicitHeight: Math.max(composer.implicitHeight, sendButton.implicitHeight)
+            spacing: Style.space(6)
 
-            TextField {
-              id: composer
-              anchors.left: parent.left
-              anchors.right: sendButton.left
-              anchors.rightMargin: Style.space(6)
-              anchors.verticalCenter: parent.verticalCenter
-              foreground: root.foreground
-              accent: root.bar ? root.bar.urgent : Color.accent
-              placeholderText: root.linked ? "Reply\u2026" : "Not connected"
-              enabled: root.linked
-              onAccepted: root.sendReply()
-              onTextChanged: {
-                if (!root.client || !root.activeJid || !text.length) return
-                if (!typingTimer.running) root.client.setTyping(root.activeJid, "composing")
-                typingTimer.restart()
+            Item {
+              id: pendingImagePreview
+              width: parent.width
+              visible: root.pendingImagePath.length > 0 && root.pendingImageJid === root.activeJid
+              implicitHeight: visible ? Style.space(116) : 0
+              height: implicitHeight
+
+              Rectangle {
+                anchors.fill: parent
+                color: Style.normalFillFor(root.foreground, Color.accent)
+                radius: Style.cornerRadius
               }
-              Keys.onEscapePressed: function (event) {
-                if (composer.text.length > 0) composer.text = ""
-                else root.back()
-                event.accepted = true
+
+              Image {
+                id: outgoingPreviewImage
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(6)
+                anchors.verticalCenter: parent.verticalCenter
+                width: Style.space(104)
+                height: parent.height - Style.space(12)
+                source: pendingImagePreview.visible ? Qt.resolvedUrl("file://" + root.pendingImagePath) : ""
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+              }
+
+              Text {
+                anchors.left: outgoingPreviewImage.right
+                anchors.right: cancelImage.left
+                anchors.leftMargin: Style.space(8)
+                anchors.rightMargin: Style.space(6)
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.imageSending ? "Sending image\u2026" : "Image ready to send"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+
+              PanelActionButton {
+                id: cancelImage
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(6)
+                anchors.top: parent.top
+                anchors.topMargin: Style.space(6)
+                iconText: "\uf00d"
+                tooltipText: "Remove image"
+                enabled: !root.imageSending
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.clearPendingImage(true)
               }
             }
 
-            PanelActionButton {
-              id: sendButton
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              iconText: "\uf1d8"
-              tooltipText: "Send"
-              enabled: root.linked && composer.text.trim().length > 0
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.sendReply()
+            Item {
+              width: parent.width
+              implicitHeight: Math.max(composer.implicitHeight, sendButton.implicitHeight)
+
+              TextField {
+                id: composer
+                anchors.left: parent.left
+                anchors.right: sendButton.left
+                anchors.rightMargin: Style.space(6)
+                anchors.verticalCenter: parent.verticalCenter
+                foreground: root.foreground
+                accent: root.bar ? root.bar.urgent : Color.accent
+                placeholderText: root.linked
+                  ? (pendingImagePreview.visible ? "Caption (optional)\u2026" : "Reply\u2026")
+                  : "Not connected"
+                enabled: root.linked && !root.imageSending
+                onAccepted: root.sendReply()
+                onTextChanged: {
+                  if (!root.client || !root.activeJid || !text.length) return
+                  if (!typingTimer.running) root.client.setTyping(root.activeJid, "composing")
+                  typingTimer.restart()
+                }
+                Keys.onPressed: function (event) {
+                  if (event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier)
+                      && !(event.modifiers & Qt.ShiftModifier)) {
+                    event.accepted = true
+                    root.pasteImageOrText()
+                  }
+                }
+                Keys.onEscapePressed: function (event) {
+                  if (pendingImagePreview.visible) root.clearPendingImage(true)
+                  else if (composer.text.length > 0) composer.text = ""
+                  else root.back()
+                  event.accepted = true
+                }
+              }
+
+              PanelActionButton {
+                id: sendButton
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "\uf1d8"
+                tooltipText: pendingImagePreview.visible ? "Send image" : "Send"
+                enabled: root.linked && !root.imageSending
+                  && (composer.text.trim().length > 0 || pendingImagePreview.visible)
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.sendReply()
+              }
             }
           }
         }

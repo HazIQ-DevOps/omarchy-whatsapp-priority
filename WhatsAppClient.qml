@@ -62,6 +62,7 @@ Item {
   signal commandFailed(string command, string message)
   signal pairCodeReceived(string code)
   signal sendAcknowledged(string jid)
+  signal imageSendAcknowledged(string jid)
 
   function request(payload) {
     var socket = socketLoader.item
@@ -128,6 +129,11 @@ Item {
     var payload = { t: "send", jid: jid, text: text }
     if (quotedId) payload.quoted = quotedId
     return request(payload)
+  }
+
+  function sendImage(jid, path, mime, caption) {
+    if (!jid || !path || !mime) return false
+    return request({ t: "sendImage", jid: jid, path: path, mime: mime, caption: caption || "" })
   }
 
   property bool setupTried: false
@@ -246,6 +252,7 @@ Item {
         break
 
       case "ack":
+        if (frame.for === "sendImage" && frame.jid) root.imageSendAcknowledged(frame.jid)
         if (frame.jid) root.sendAcknowledged(frame.jid)
         break
 

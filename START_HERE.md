@@ -26,6 +26,8 @@ Press `S` in the chat list, or click the gear, to open Settings. Enter **one** p
 
 Press `C` on a selected chat to clear its preview from this plugin until a newer message arrives or the shell restarts. This does **not** delete or mark the chat read in WhatsApp. Right-click the icon for the full WhatsApp Web client.
 
+In a conversation, press `Ctrl+V` to attach a copied PNG, JPEG, or WebP image (up to 12 MB). Check the preview, optionally type a caption, then press `Enter` or click Send. `Escape` or the × button removes the pending image without sending it. Plain text still pastes normally.
+
 ## Privacy and provenance
 
 Each installation creates its own linked-device credentials in `~/.local/state/omarchy-whatsapp/auth/` and a local message cache in `~/.local/state/omarchy-whatsapp/store.json`. Keep those private. This archive contains source code only. The bridge uses [Baileys](https://github.com/WhiskeySockets/Baileys), an unofficial WhatsApp Web client.

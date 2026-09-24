@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+# Copy a Wayland clipboard image into a private runtime file for the composer.
+# No message is sent until the user presses Send in the plugin.
+set -euo pipefail
+
+runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+paste_dir="$runtime_dir/omarchy-whatsapp-paste"
+max_bytes=$((12 * 1024 * 1024))
+
+case "${1:-capture}" in
+  delete)
+    path="${2:-}"
+    if [[ $(dirname -- "$path") == "$paste_dir" && $(basename -- "$path") == paste.* && -f $path && ! -L $path ]]; then
+      rm -f -- "$path"
+    fi
+    ;;
+  capture)
+    if ! command -v wl-paste >/dev/null 2>&1; then
+      printf '{"kind":"error","message":"wl-paste is not installed"}\n'
+      exit 0
+    fi
+
+    types="$(wl-paste --list-types 2>/dev/null || true)"
+    mime=""
+    for candidate in image/png image/jpeg image/webp; do
+      if printf '%s\n' "$types" | grep -Fxq "$candidate"; then
+        mime="$candidate"
+        break
+      fi
+    done
+    if [[ -z $mime ]]; then
+      printf '{"kind":"none"}\n'
+      exit 0
+    fi
+
+    mkdir -p -m 700 "$paste_dir"
+    chmod 700 "$paste_dir"
+    umask 077
+    path="$(mktemp "$paste_dir/paste.XXXXXXXX")"
+    trap 'rm -f -- "$path"' EXIT
+    if ! wl-paste --no-newline --type "$mime" >"$path"; then
+      printf '{"kind":"error","message":"Could not read the clipboard image"}\n'
+      exit 0
+    fi
+
+    bytes="$(stat -c %s "$path")"
+    if ((bytes == 0 || bytes > max_bytes)); then
+      printf '{"kind":"error","message":"Image must be between 1 byte and 12 MB"}\n'
+      exit 0
+    fi
+    actual="$(file --brief --mime-type "$path")"
+    if [[ $actual != "$mime" ]]; then
+      printf '{"kind":"error","message":"Clipboard image format could not be verified"}\n'
+      exit 0
+    fi
+
+    jq -nc --arg path "$path" --arg mime "$mime" --argjson bytes "$bytes" \
+      '{kind:"image",path:$path,mime:$mime,bytes:$bytes}'
+    trap - EXIT
+    ;;
+  *)
+    printf '{"kind":"error","message":"Unknown clipboard action"}\n'
+    ;;
+esac

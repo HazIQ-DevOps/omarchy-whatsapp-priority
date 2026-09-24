@@ -1,4 +1,4 @@
-import { chmodSync, readdirSync, readFileSync, rmSync, writeFileSync, unlinkSync } from 'node:fs'
+import { chmodSync, copyFileSync, readdirSync, readFileSync, rmSync, writeFileSync, unlinkSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import makeWASocket, {
@@ -19,7 +19,8 @@ import { Store, normalizeJid } from './lib/store.js'
 import { Notifier } from './lib/notify.js'
 import { Bus } from './lib/server.js'
 import { extractImage, isGroupJid, isIgnorableChat, isPhotoPlaceholder, isSilent, messageText, messageType, prettyJid } from './lib/message.js'
-import { existingMediaPath, MediaCache } from './lib/media.js'
+import { existingMediaPath, mediaPathFor, MediaCache } from './lib/media.js'
+import { validateOutgoingImage } from './lib/outgoing-image.js'
 import {
   applyChatNotificationPreferences,
   isChatMuted,
@@ -1094,6 +1095,23 @@ async function refreshMissingImages(jid, list) {
   }
 }
 
+function recordSentMessage(rawJid, sent) {
+  if (!sent) return
+  // generateWAMessage stamps PENDING. relayMessage has already succeeded here,
+  // so the server has the stanza — show a single tick immediately.
+  if (asStatus(sent.status) < MSG_SERVER_ACK) sent.status = MSG_SERVER_ACK
+  const res = ingest(rawJid, sent)
+  if (!res) return
+  const { message, canonicalTarget } = res
+  if ((message.status || 0) < MSG_SERVER_ACK) {
+    message.status = MSG_SERVER_ACK
+    store.upsertMessage(canonicalTarget, message)
+  }
+  bus.broadcast({ t: 'message', jid: rawJid, message: publicMessage(message), chat: store.chat(canonicalTarget), unread: store.totalUnread() })
+  applyMessageStatus(canonicalTarget, message.id, MSG_SERVER_ACK)
+  pushChats()
+}
+
 async function handleCommand(payload, reply) {
   const { t, id } = payload
   switch (t) {
@@ -1186,23 +1204,35 @@ async function handleCommand(payload, reply) {
       }
 
       const sent = await sock.sendMessage(rawJid, { text }, options)
-      if (sent) {
-        // generateWAMessage stamps PENDING. relayMessage has already succeeded
-        // here, so the server has the stanza — show a single tick immediately.
-        if (asStatus(sent.status) < MSG_SERVER_ACK) sent.status = MSG_SERVER_ACK
-        const res = ingest(rawJid, sent)
-        if (res) {
-          const { message, canonicalTarget } = res
-          if ((message.status || 0) < MSG_SERVER_ACK) {
-            message.status = MSG_SERVER_ACK
-            store.upsertMessage(canonicalTarget, message)
-          }
-          bus.broadcast({ t: 'message', jid: rawJid, message: publicMessage(message), chat: store.chat(canonicalTarget), unread: store.totalUnread() })
-          applyMessageStatus(canonicalTarget, message.id, MSG_SERVER_ACK)
-          pushChats()
+      recordSentMessage(rawJid, sent)
+      reply({ t: 'ack', id, ok: true, jid: rawJid })
+      return
+    }
+
+    case 'sendImage': {
+      const rawJid = payload.jid
+      if (!rawJid) throw new Error('sendImage: jid required')
+      if (!sock || connection !== 'open') throw new Error('sendImage: not connected to WhatsApp')
+      const image = validateOutgoingImage(payload.path, payload.mime)
+      const caption = String(payload.caption || '').slice(0, 4096)
+      const sent = await sock.sendMessage(rawJid, {
+        image: { url: image.path },
+        mimetype: image.mimetype,
+        caption
+      })
+      if (!sent) throw new Error('sendImage: WhatsApp did not accept the image')
+      if (sent.key?.id) {
+        try {
+          const cached = mediaPathFor(sent.key.id, image.mimetype)
+          copyFileSync(image.path, cached)
+          chmodSync(cached, 0o600)
+        } catch (err) {
+          logger.warn({ err, id: sent.key.id }, 'sendImage: could not cache sent image')
         }
       }
-      reply({ t: 'ack', id, ok: true, jid: rawJid })
+      recordSentMessage(rawJid, sent)
+      try { unlinkSync(image.path) } catch { /* runtime file may already be gone */ }
+      reply({ t: 'ack', for: 'sendImage', id, ok: true, jid: rawJid })
       return
     }
 

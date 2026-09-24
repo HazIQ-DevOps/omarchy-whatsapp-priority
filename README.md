@@ -4,7 +4,7 @@
 
 WhatsApp in the Omarchy Quattro bar: unread badge, desktop notifications you can
 click, inline reply without leaving the bar, and one keystroke to the full
-WhatsApp Web client when you need media, calls, or search.
+WhatsApp Web client when you need calls, search, or unsupported media.
 
 <p align="center">
   <img src="docs/inbox.png" alt="Chat list in the Omarchy bar" width="48%" />
@@ -95,6 +95,7 @@ systemctl --user edit omarchy-whatsapp     # Environment=OMARCHY_WHATSAPP_PAIRIN
 | Refresh chats | Refresh button, or `r` |
 | Open a chat | `Enter` |
 | Reply | Type, then `Enter` |
+| Send a copied image | In a chat, press `Ctrl+V`, check the preview, optionally add a caption, then press `Enter` or Send |
 | Back to the chat list | `Escape` |
 | Close the panel | `Escape` from the list |
 | Full WhatsApp Web | Right-click the icon, or use the ⧉ button in the panel |
@@ -167,9 +168,11 @@ omarchy bar move io.github.ricky.whatsapp --section right
 | `~/.local/state/omarchy-whatsapp/store.json` | Recent chats and up to 200 messages per chat (`0600`) |
 | `$XDG_RUNTIME_DIR/omarchy-whatsapp.sock` | Control socket (`0600`, cleared on logout) |
 
-Nothing leaves your machine except traffic to WhatsApp itself. Media is never
-downloaded — photos and voice notes show as `📷 Photo`, `🎤 Voice message`, and
-so on. Open the full client for the real thing.
+Nothing leaves your machine except traffic to WhatsApp itself. Incoming images
+and stickers up to 12 MB may be downloaded into the local media cache so they
+can appear inline. Other media, including voice notes, uses placeholders; open
+the full client for those. A copied image remains in a private runtime file
+until you send or remove it.
 
 `omarchy-whatsapp logout` unlinks the device and deletes all three.
 
