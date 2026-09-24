@@ -90,13 +90,14 @@ systemctl --user edit omarchy-whatsapp     # Environment=OMARCHY_WHATSAPP_PAIRIN
 | Action | How |
 |--------|-----|
 | Open the panel | Click the bar icon |
+| Open the panel from the unread summary | Click the hover card |
 | Move through chats | `j` / `k` or arrow keys |
 | Refresh chats | Refresh button, or `r` |
 | Open a chat | `Enter` |
 | Reply | Type, then `Enter` |
 | Back to the chat list | `Escape` |
 | Close the panel | `Escape` from the list |
-| Full WhatsApp Web | Click the hover summary, right-click the icon, or use the ⧉ button in the panel |
+| Full WhatsApp Web | Right-click the icon, or use the ⧉ button in the panel |
 | Log out | Power button on the chat list |
 | Open a chat from a notification | Click the notification |
 

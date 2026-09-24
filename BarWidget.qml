@@ -182,98 +182,100 @@ BarWidget {
       else root.scheduleHoverClose()
     }
 
-    Column {
-      id: hoverContent
-      width: parent.width
-      spacing: Style.space(8)
+    Item {
+      id: hoverClickSurface
+      anchors.fill: parent
 
-      RowLayout {
+      Column {
+        id: hoverContent
         width: parent.width
+        spacing: Style.space(8)
+
+        RowLayout {
+          width: parent.width
+          Text {
+            Layout.fillWidth: true
+            text: "WhatsApp"
+            textFormat: Text.PlainText
+            color: root.bar ? root.bar.foreground : Color.foreground
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.bold: true
+            font.pixelSize: Style.font.title
+          }
+          Text {
+            text: root.unread > 0 ? root.unread + " unread" : ""
+            textFormat: Text.PlainText
+            color: root.priorityAlert ? "#e5484d" : "#25D366"
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+          }
+        }
+
         Text {
-          Layout.fillWidth: true
-          text: "WhatsApp"
+          visible: root.hoverChats.length === 0
+          width: parent.width
+          text: root.linked ? "No recent conversations" : "Click to link WhatsApp"
           textFormat: Text.PlainText
           color: root.bar ? root.bar.foreground : Color.foreground
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
-          font.bold: true
-          font.pixelSize: Style.font.title
         }
+
+        Repeater {
+          model: root.hoverChats
+          delegate: Column {
+            required property var modelData
+            width: hoverContent.width
+            spacing: Style.space(2)
+
+            RowLayout {
+              width: parent.width
+              Text {
+                Layout.fillWidth: true
+                text: Model.chatTitle(modelData)
+                textFormat: Text.PlainText
+                color: Model.isPriorityChat(modelData, root.priorityName)
+                  ? "#e5484d" : (root.bar ? root.bar.foreground : Color.foreground)
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.bold: (modelData.unread || 0) > 0
+                elide: Text.ElideRight
+              }
+              Text {
+                text: (modelData.unread || 0) > 0 ? String(modelData.unread) : ""
+                textFormat: Text.PlainText
+                color: Model.isPriorityChat(modelData, root.priorityName) ? "#e5484d" : "#25D366"
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              }
+            }
+            Text {
+              width: parent.width
+              text: Model.truncate(Model.chatPreview(modelData), 90)
+              textFormat: Text.PlainText
+              color: root.bar ? root.bar.foreground : Color.foreground
+              opacity: 0.72
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              wrapMode: Text.Wrap
+              maximumLineCount: 2
+              elide: Text.ElideRight
+            }
+          }
+        }
+
         Text {
-          text: root.unread > 0 ? root.unread + " unread" : ""
+          width: parent.width
+          text: "Click to open chats, replies and settings"
           textFormat: Text.PlainText
-          color: root.priorityAlert ? "#e5484d" : "#25D366"
+          color: root.bar ? root.bar.foreground : Color.foreground
+          opacity: 0.6
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.caption
         }
       }
 
-      Text {
-        visible: root.hoverChats.length === 0
-        width: parent.width
-        text: root.linked ? "No recent conversations" : "Click to link WhatsApp"
-        textFormat: Text.PlainText
-        color: root.bar ? root.bar.foreground : Color.foreground
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-      }
-
-      Repeater {
-        model: root.hoverChats
-        delegate: Column {
-          required property var modelData
-          width: hoverContent.width
-          spacing: Style.space(2)
-
-          RowLayout {
-            width: parent.width
-            Text {
-              Layout.fillWidth: true
-              text: Model.chatTitle(modelData)
-              textFormat: Text.PlainText
-              color: Model.isPriorityChat(modelData, root.priorityName)
-                ? "#e5484d" : (root.bar ? root.bar.foreground : Color.foreground)
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.bold: (modelData.unread || 0) > 0
-              elide: Text.ElideRight
-            }
-            Text {
-              text: (modelData.unread || 0) > 0 ? String(modelData.unread) : ""
-              textFormat: Text.PlainText
-              color: Model.isPriorityChat(modelData, root.priorityName) ? "#e5484d" : "#25D366"
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            }
-          }
-          Text {
-            width: parent.width
-            text: Model.truncate(Model.chatPreview(modelData), 90)
-            textFormat: Text.PlainText
-            color: root.bar ? root.bar.foreground : Color.foreground
-            opacity: 0.72
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            wrapMode: Text.Wrap
-            maximumLineCount: 2
-            elide: Text.ElideRight
-          }
-        }
-      }
-
-      Text {
-        width: parent.width
-        text: "Click to open full WhatsApp"
-        textFormat: Text.PlainText
-        color: root.bar ? root.bar.foreground : Color.foreground
-        opacity: 0.6
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-        font.pixelSize: Style.font.caption
-      }
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      acceptedButtons: Qt.LeftButton
-      cursorShape: Qt.PointingHandCursor
-      onClicked: {
-        hoverPreview.open = false
-        root.openWebClient()
+      MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton
+        cursorShape: Qt.PointingHandCursor
+        onClicked: button.triggerPress(Qt.LeftButton)
       }
     }
   }
