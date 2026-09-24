@@ -37,6 +37,10 @@ Panel {
   property string pendingImageJid: ""
   property string pasteRequestJid: ""
   property bool imageSending: false
+  property string searchQuery: ""
+  property bool emojiPickerOpen: false
+  property int emojiCursorIndex: 0
+  readonly property var emojiChoices: ["🙂", "😄", "😂", "😉", "🙁", "😢", "😮", "😛", "❤️", "👍", "🎉", "🙏"]
 
   readonly property var chats: client ? client.chats : []
   readonly property bool daemonOnline: client ? client.daemonOnline : false
@@ -81,7 +85,50 @@ Panel {
     var visible = root.hostWidget && root.hostWidget.isChatDismissed
       ? list.filter(function(chat) { return !root.hostWidget.isChatDismissed(chat) })
       : list
-    return visible.slice(0, Math.max(1, root.chatLimit))
+    var matching = root.searchQuery.trim().length > 0
+      ? list.filter(function(chat) { return Model.matchesChatSearch(chat, root.searchQuery) })
+      : visible
+    return matching.slice(0, root.searchQuery.trim().length > 0 ? 200 : Math.max(1, root.chatLimit))
+  }
+
+  onSearchQueryChanged: {
+    root.cursorIndex = 0
+    if (chatList) chatList.positionViewAtBeginning()
+  }
+
+  function focusSearch() {
+    if (root.view !== "chats") root.back()
+    if (root.client) root.client.requestChats(200)
+    Qt.callLater(function () { searchField.forceActiveFocus() })
+  }
+
+  function insertEmoji(value) {
+    if (!value || root.view !== "chat") return
+    var at = composer.cursorPosition
+    composer.insert(at, value)
+    composer.cursorPosition = at + value.length
+    root.emojiPickerOpen = false
+    composer.forceActiveFocus()
+  }
+
+  function toggleEmojiPicker() {
+    root.emojiPickerOpen = !root.emojiPickerOpen
+    if (root.emojiPickerOpen) {
+      root.emojiCursorIndex = 0
+      Qt.callLater(function () { emojiGrid.forceActiveFocus() })
+    } else {
+      composer.forceActiveFocus()
+    }
+  }
+
+  function expandComposerShorthand() {
+    var at = composer.cursorPosition
+    var before = composer.text.slice(0, at)
+    if (!/\s$/.test(before)) return
+    var expanded = Model.expandEmoticons(before)
+    if (expanded === before) return
+    composer.text = expanded + composer.text.slice(at)
+    composer.cursorPosition = expanded.length
   }
 
   function clearSelectedChat() {
@@ -97,6 +144,7 @@ Panel {
   // is actually on screen. onOpenedChanged marks it read once it is.
   function prepareChat(jid) {
     if (!jid || !root.client) return
+    root.emojiPickerOpen = false
     root.activeJid = jid
     root.activeChat = null
     root.messages = []
@@ -114,6 +162,7 @@ Panel {
   }
 
   function back() {
+    root.emojiPickerOpen = false
     root.view = "chats"
     root.activeJid = ""
     root.activeChat = null
@@ -178,7 +227,7 @@ Panel {
   }
 
   function sendReply() {
-    var text = composer.text
+    var text = Model.expandEmoticons(composer.text)
     var hasPendingImage = root.pendingImagePath.length > 0 && root.pendingImageJid === root.activeJid
     if ((!text || !text.trim().length) && !hasPendingImage) return
     if (!root.client || !root.client.ready) {
@@ -466,7 +515,9 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
       // Composer, logout confirm, and image peek own keys while they are up.
-      blocked: composer.activeFocus || priorityField.activeFocus || root.logoutConfirmOpen || root.peekActive
+      blocked: composer.activeFocus || emojiButton.activeFocus || emojiGrid.activeFocus
+        || priorityField.activeFocus || searchField.activeFocus
+        || root.logoutConfirmOpen || root.peekActive
 
       onCloseRequested: {
         if (root.peekActive) root.peekImagePath = ""
@@ -479,6 +530,7 @@ Panel {
       onActivateRequested: root.activateCursor()
       onTextKey: function (text) {
         if (text === "r" || text === "R") root.refreshChats()
+        else if (text === "/") root.focusSearch()
         else if ((text === "s" || text === "S") && root.view === "chats") root.openSettings()
         else if ((text === "c" || text === "C") && root.view === "chats") root.clearSelectedChat()
       }
@@ -732,10 +784,26 @@ Panel {
           spacing: Style.space(4)
           visible: !root.showLogin && root.view === "chats"
 
+          TextField {
+            id: searchField
+            width: parent.width
+            foreground: root.foreground
+            accent: root.bar ? root.bar.urgent : Color.accent
+            placeholderText: "Search contacts  /"
+            onTextChanged: root.searchQuery = text
+            onActiveFocusChanged: if (activeFocus && root.client) root.client.requestChats(200)
+            onAccepted: root.activateCursor()
+            Keys.onEscapePressed: function(event) {
+              if (searchField.text.length > 0) searchField.clear()
+              else keyCatcher.forceActiveFocus()
+              event.accepted = true
+            }
+          }
+
           Text {
             width: parent.width
             visible: root.visibleChats.length === 0
-            text: "No conversations yet."
+            text: root.searchQuery.trim().length > 0 ? "No matching contacts." : "No conversations yet."
             color: root.secondaryForeground
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
@@ -752,7 +820,7 @@ Panel {
             boundsBehavior: Flickable.StopAtBounds
             interactive: contentHeight > height
             currentIndex: root.cursorIndex
-            spacing: Style.space(1)
+            spacing: Style.space(3)
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
             delegate: CursorSurface {
@@ -761,7 +829,7 @@ Panel {
               required property int index
 
               width: ListView.view.width
-              implicitHeight: rowText.implicitHeight + Style.space(10)
+              implicitHeight: rowText.implicitHeight + Style.space(16)
               height: implicitHeight
               foreground: root.foreground
               accent: root.bar ? root.bar.urgent : Color.accent
@@ -844,13 +912,22 @@ Panel {
                 onContainsMouseChanged: if (containsMouse) root.cursorIndex = chatRow.index
                 onClicked: root.selectChat(chatRow.modelData.jid)
               }
+
+              Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 1
+                color: root.foreground
+                opacity: 0.16
+              }
             }
           }
 
           Text {
             width: parent.width
             visible: root.visibleChats.length > 0
-            text: "↑/↓ choose · Enter open · C hide until next message · S settings · Esc close"
+            text: "↑/↓ choose · Enter open · / search · C hide · S settings · Esc close"
             textFormat: Text.PlainText
             color: root.secondaryForeground
             font.family: root.fontFamily
@@ -1116,7 +1193,7 @@ Panel {
               TextField {
                 id: composer
                 anchors.left: parent.left
-                anchors.right: sendButton.left
+                anchors.right: emojiButton.left
                 anchors.rightMargin: Style.space(6)
                 anchors.verticalCenter: parent.verticalCenter
                 foreground: root.foreground
@@ -1126,6 +1203,7 @@ Panel {
                   : "Not connected"
                 enabled: root.linked && !root.imageSending
                 onAccepted: root.sendReply()
+                onTextEdited: root.expandComposerShorthand()
                 onTextChanged: {
                   if (!root.client || !root.activeJid || !text.length) return
                   if (!typingTimer.running) root.client.setTyping(root.activeJid, "composing")
@@ -1136,14 +1214,32 @@ Panel {
                       && !(event.modifiers & Qt.ShiftModifier)) {
                     event.accepted = true
                     root.pasteImageOrText()
+                  } else if (event.key === Qt.Key_E && (event.modifiers & Qt.ControlModifier)) {
+                    event.accepted = true
+                    root.toggleEmojiPicker()
                   }
                 }
                 Keys.onEscapePressed: function (event) {
-                  if (pendingImagePreview.visible) root.clearPendingImage(true)
+                  if (root.emojiPickerOpen) root.toggleEmojiPicker()
+                  else if (pendingImagePreview.visible) root.clearPendingImage(true)
                   else if (composer.text.length > 0) composer.text = ""
                   else root.back()
                   event.accepted = true
                 }
+              }
+
+              PanelActionButton {
+                id: emojiButton
+                anchors.right: sendButton.left
+                anchors.rightMargin: Style.space(4)
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "\uf118"
+                tooltipText: "Choose an emoji"
+                enabled: root.linked && !root.imageSending
+                focusable: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.toggleEmojiPicker()
               }
 
               PanelActionButton {
@@ -1157,6 +1253,73 @@ Panel {
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 onClicked: root.sendReply()
+              }
+            }
+
+            Column {
+              width: parent.width
+              spacing: Style.space(4)
+              visible: root.emojiPickerOpen
+
+              Text {
+                width: parent.width
+                text: "Pick an emoji, or type :)  :D  LOL  <3"
+                textFormat: Text.PlainText
+                color: root.secondaryForeground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Flow {
+                id: emojiGrid
+                width: parent.width
+                spacing: Style.space(3)
+                Keys.onPressed: function (event) {
+                  if (event.key === Qt.Key_Escape) {
+                    root.toggleEmojiPicker()
+                  } else if (event.key === Qt.Key_Right || event.key === Qt.Key_Down) {
+                    root.emojiCursorIndex = Math.min(root.emojiChoices.length - 1, root.emojiCursorIndex + 1)
+                  } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Up) {
+                    root.emojiCursorIndex = Math.max(0, root.emojiCursorIndex - 1)
+                  } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+                    root.insertEmoji(root.emojiChoices[root.emojiCursorIndex])
+                  } else {
+                    return
+                  }
+                  event.accepted = true
+                }
+
+                Repeater {
+                  model: root.emojiChoices
+                  delegate: Rectangle {
+                    required property string modelData
+                    required property int index
+                    width: Style.space(30)
+                    height: Style.space(30)
+                    radius: Style.cornerRadius
+                    color: emojiMouse.containsMouse
+                      ? Style.hoverFillFor(root.foreground, root.bar ? root.bar.urgent : Color.accent)
+                      : Style.normalFillFor(root.foreground, Color.accent)
+                    border.width: emojiGrid.activeFocus && root.emojiCursorIndex === index ? 2 : 0
+                    border.color: root.bar ? root.bar.urgent : Color.accent
+
+                    Text {
+                      anchors.centerIn: parent
+                      text: modelData
+                      textFormat: Text.PlainText
+                      font.pixelSize: Style.font.title
+                    }
+
+                    MouseArea {
+                      id: emojiMouse
+                      anchors.fill: parent
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      onContainsMouseChanged: if (containsMouse) root.emojiCursorIndex = index
+                      onClicked: root.insertEmoji(modelData)
+                    }
+                  }
+                }
               }
             }
           }

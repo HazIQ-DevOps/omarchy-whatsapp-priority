@@ -59,6 +59,12 @@ BarWidget {
     hoverPreview.open = false
     if (panelLoader.item) panelLoader.item.toggle()
   }
+  function openSearch() {
+    hoverPreview.open = false
+    if (!panelLoader.item) return
+    panelLoader.item.open()
+    panelLoader.item.focusSearch()
+  }
   function closeForPopoutSwitch() { if (panelLoader.item) panelLoader.item.closeForPopoutSwitch() }
 
   function injectPanel() {
@@ -101,6 +107,7 @@ BarWidget {
   // every monitor at once.
   function focusChat(jid) {
     if (!jid || !panelLoader.item) return
+    hoverPreview.open = false
     panelLoader.item.prepareChat(jid)
     panelLoader.item.open()
   }
@@ -186,6 +193,13 @@ BarWidget {
       id: hoverClickSurface
       anchors.fill: parent
 
+      MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton
+        cursorShape: Qt.PointingHandCursor
+        onClicked: button.triggerPress(Qt.LeftButton)
+      }
+
       Column {
         id: hoverContent
         width: parent.width
@@ -201,6 +215,11 @@ BarWidget {
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.bold: true
             font.pixelSize: Style.font.title
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.open()
+            }
           }
           Text {
             text: root.unread > 0 ? root.unread + " unread" : ""
@@ -208,6 +227,13 @@ BarWidget {
             color: root.priorityAlert ? "#e5484d" : "#25D366"
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
+          }
+          PanelActionButton {
+            iconText: "\uf002"
+            tooltipText: "Search contacts"
+            foreground: root.bar ? root.bar.foreground : Color.foreground
+            fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+            onClicked: root.openSearch()
           }
         }
 
@@ -218,64 +244,95 @@ BarWidget {
           textFormat: Text.PlainText
           color: root.bar ? root.bar.foreground : Color.foreground
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.open()
+          }
         }
 
         Repeater {
           model: root.hoverChats
-          delegate: Column {
+          delegate: Rectangle {
+            id: chatTile
             required property var modelData
             width: hoverContent.width
-            spacing: Style.space(2)
+            height: tileContent.implicitHeight + Style.space(14)
+            radius: Style.cornerRadius
+            color: tileMouse.containsMouse
+              ? Style.hoverFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent)
+              : Style.normalFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent)
+            border.width: 1
+            border.color: {
+              var ink = root.bar ? root.bar.foreground : Color.foreground
+              return Qt.rgba(ink.r, ink.g, ink.b, 0.2)
+            }
 
-            RowLayout {
-              width: parent.width
+            Column {
+              id: tileContent
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.leftMargin: Style.space(9)
+              anchors.rightMargin: Style.space(9)
+              spacing: Style.space(3)
+
+              RowLayout {
+                width: parent.width
+                Text {
+                  Layout.fillWidth: true
+                  text: Model.chatTitle(chatTile.modelData)
+                  textFormat: Text.PlainText
+                  color: Model.isPriorityChat(chatTile.modelData, root.priorityName)
+                    ? "#e5484d" : (root.bar ? root.bar.foreground : Color.foreground)
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.bold: (chatTile.modelData.unread || 0) > 0
+                  elide: Text.ElideRight
+                }
+                Text {
+                  text: (chatTile.modelData.unread || 0) > 0 ? String(chatTile.modelData.unread) : ""
+                  textFormat: Text.PlainText
+                  color: Model.isPriorityChat(chatTile.modelData, root.priorityName) ? "#e5484d" : "#25D366"
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                }
+              }
               Text {
-                Layout.fillWidth: true
-                text: Model.chatTitle(modelData)
+                width: parent.width
+                text: Model.truncate(Model.chatPreview(chatTile.modelData), 90)
                 textFormat: Text.PlainText
-                color: Model.isPriorityChat(modelData, root.priorityName)
-                  ? "#e5484d" : (root.bar ? root.bar.foreground : Color.foreground)
+                color: root.bar ? root.bar.foreground : Color.foreground
+                opacity: 0.72
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.bold: (modelData.unread || 0) > 0
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
                 elide: Text.ElideRight
               }
-              Text {
-                text: (modelData.unread || 0) > 0 ? String(modelData.unread) : ""
-                textFormat: Text.PlainText
-                color: Model.isPriorityChat(modelData, root.priorityName) ? "#e5484d" : "#25D366"
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              }
             }
-            Text {
-              width: parent.width
-              text: Model.truncate(Model.chatPreview(modelData), 90)
-              textFormat: Text.PlainText
-              color: root.bar ? root.bar.foreground : Color.foreground
-              opacity: 0.72
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              wrapMode: Text.Wrap
-              maximumLineCount: 2
-              elide: Text.ElideRight
+
+            MouseArea {
+              id: tileMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.focusChat(chatTile.modelData.jid)
             }
           }
         }
 
         Text {
           width: parent.width
-          text: "Click to open chats, replies and settings"
+          text: "Open all chats · click a contact above to reply"
           textFormat: Text.PlainText
           color: root.bar ? root.bar.foreground : Color.foreground
           opacity: 0.6
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.caption
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.open()
+          }
         }
-      }
-
-      MouseArea {
-        anchors.fill: parent
-        acceptedButtons: Qt.LeftButton
-        cursorShape: Qt.PointingHandCursor
-        onClicked: button.triggerPress(Qt.LeftButton)
       }
     }
   }

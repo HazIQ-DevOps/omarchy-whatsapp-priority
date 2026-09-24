@@ -90,11 +90,14 @@ systemctl --user edit omarchy-whatsapp     # Environment=OMARCHY_WHATSAPP_PAIRIN
 | Action | How |
 |--------|-----|
 | Open the panel | Click the bar icon |
-| Open the panel from the unread summary | Click the hover card |
+| Open a contact from the hover summary | Click that contact's card |
+| Open the full chat list | Click the WhatsApp heading, the hover card footer, or the bar icon |
+| Search recent chats | Click the search icon in the hover summary, or press `/` in the chat list |
 | Move through chats | `j` / `k` or arrow keys |
 | Refresh chats | Refresh button, or `r` |
 | Open a chat | `Enter` |
 | Reply | Type, then `Enter` |
+| Add emoji | Use the smile button or `Ctrl+E` in a chat, then arrows and `Enter`; or type `:)`, `:D`, `LOL`, `;)`, `:(`, `:P`, or `<3` |
 | Send a copied image | In a chat, press `Ctrl+V`, check the preview, optionally add a caption, then press `Enter` or Send |
 | Back to the chat list | `Escape` |
 | Close the panel | `Escape` from the list |

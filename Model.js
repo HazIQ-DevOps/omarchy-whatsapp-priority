@@ -75,6 +75,30 @@ function normalizedName(name) {
   return String(name || "").trim().replace(/\s+/g, " ").toLocaleLowerCase()
 }
 
+function matchesChatSearch(chat, query) {
+  var needle = normalizedName(query)
+  if (!needle) return true
+  if (!chat) return false
+  return normalizedName(chatTitle(chat)).indexOf(needle) !== -1
+    || normalizedName(chat.lastSender).indexOf(needle) !== -1
+    || String(chat.jid || "").toLocaleLowerCase().indexOf(needle) !== -1
+}
+
+// Expand whole typed shortcuts only, so "LOL" in a longer word or a URL is
+// left alone. The same conversion applies to captions and ordinary replies.
+function expandEmoticons(text) {
+  var replacements = {
+    ":)": "🙂", ":-)": "🙂", ":D": "😄", ":-D": "😄",
+    ";)": "😉", ";-)": "😉", ":(": "🙁", ":-(": "🙁",
+    ":P": "😛", ":-P": "😛", ":O": "😮", ":-O": "😮",
+    ":'(": "😢", "<3": "❤️", "LOL": "😂"
+  }
+  return String(text || "").replace(/(^|\s)(:\-?\)|:\-?[DdPpOo(]|;\-?\)|:'\(|<3|LOL)(?=$|[\s.,!?])/gim,
+    function (full, prefix, shortcut) {
+      return prefix + (replacements[shortcut.toUpperCase()] || replacements[shortcut] || full.slice(prefix.length))
+    })
+}
+
 function isPriorityChat(chat, priorityName) {
   if (!chat || (Number(chat.unread) || 0) <= 0) return false
   var wanted = normalizedName(priorityName)
@@ -253,5 +277,3 @@ function formatMessageText(text, linkColor) {
 
   return docPrefix + result
 }
-
-
