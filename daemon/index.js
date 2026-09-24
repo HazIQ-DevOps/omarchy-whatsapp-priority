@@ -9,7 +9,9 @@ import makeWASocket, {
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
   USyncQuery,
-  USyncUser
+  USyncUser,
+  normalizeMessageContent,
+  getContentType
 } from 'baileys'
 import QRCode from 'qrcode'
 
@@ -22,6 +24,7 @@ import { extractImage, isGroupJid, isIgnorableChat, isPhotoPlaceholder, isSilent
 import { existingMediaPath, mediaPathFor, MediaCache } from './lib/media.js'
 import { validateOutgoingImage } from './lib/outgoing-image.js'
 import { installSignalConsoleRedaction } from './lib/signal-console.js'
+import { quotedMessageFor, forwardMessageFor } from './lib/message-actions.js'
 import {
   applyChatNotificationPreferences,
   isChatMuted,
@@ -320,12 +323,55 @@ function flatten(chatJid, message) {
       participant: message.key?.participant || undefined
     }
   }
+  const content = normalizeMessageContent(message.message)
+  const node = content?.[getContentType(content)]
+  const context = node?.contextInfo
+  if (context?.stanzaId) {
+    flat.quote = {
+      id: context.stanzaId,
+      text: messageText(context.quotedMessage) || 'Message',
+      sender: context.participant ? (store.lookupName(context.participant) || prettyJid(context.participant)) : ''
+    }
+  }
+  if (context?.isForwarded || context?.forwardingScore > 0) flat.forwarded = true
   if (image) {
     const { caption, ...payload } = image
     flat.media = payload
     flat.imagePath = existingMediaPath({ id, media: payload, imagePath: '' })
   }
   return flat
+}
+
+function publishMessagePatch(jid, message) {
+  if (!message) return
+  store.markDirty()
+  const canonical = store.canonicalJid(jid) || jid
+  const chat = store.chat(canonical)
+  const list = store.messages.get(canonical) || []
+  if (list[list.length - 1]?.id === message.id) {
+    chat.lastText = message.text
+    pushChatsSoon()
+  }
+  bus.broadcast({ t: 'messagePatch', jid: canonical, id: message.id, fields: {
+    text: message.text,
+    edited: !!message.edited,
+    deleted: !!message.deleted,
+    imagePath: message.imagePath || '',
+    reactions: message.reactions || []
+  } })
+}
+
+function messageForAction(jid, messageId) {
+  const canonical = store.canonicalJid(jid) || normalizeJid(jid) || jid
+  const message = store.findMessage(canonical, messageId)
+  if (!message || message.deleted) throw new Error('Message is no longer available')
+  return { canonical, message }
+}
+
+function setReaction(message, actor, emoji) {
+  const reactions = (message.reactions || []).filter((entry) => entry.actor !== actor)
+  if (emoji) reactions.push({ actor, emoji })
+  message.reactions = reactions
 }
 
 async function resolveGroupName(jid) {
@@ -987,12 +1033,56 @@ async function connect() {
 
         const id = update?.key?.id || update?.id
         if (!id) continue
+        const original = store.findMessage(canonical, id)
+        if (original && u.message === null) {
+          original.text = 'Message deleted'
+          original.deleted = true
+          original.imagePath = ''
+          original.media = undefined
+          publishMessagePatch(canonical, original)
+        } else if (original && u.message) {
+          const editedText = messageText(u.message)
+          if (editedText) {
+            original.text = editedText
+            original.edited = true
+            publishMessagePatch(canonical, original)
+          }
+        }
         const status = asStatus(u.status) || (u.readTimestamp ? MSG_READ : 0)
         applyMessageStatus(canonical, id, status)
       }
       if (unreadCleared || store.totalUnread() !== before) {
         pushChatsSoon()
         pushState()
+      }
+    })
+
+    sock.ev.on('messages.reaction', (updates) => {
+      if (sock !== thisSocket) return
+      for (const entry of updates || []) {
+        const jid = entry?.key?.remoteJid
+        const id = entry?.key?.id
+        if (!jid || !id) continue
+        const original = store.findMessage(jid, id)
+        if (!original) continue
+        const actor = entry.reaction?.key?.fromMe
+          ? 'me'
+          : (entry.reaction?.key?.participant || jid)
+        setReaction(original, actor, entry.reaction?.text || '')
+        publishMessagePatch(jid, original)
+      }
+    })
+
+    sock.ev.on('messages.delete', (event) => {
+      if (sock !== thisSocket) return
+      for (const key of event?.keys || []) {
+        const original = store.findMessage(key.remoteJid, key.id)
+        if (!original) continue
+        original.text = 'Message deleted'
+        original.deleted = true
+        original.imagePath = ''
+        original.media = undefined
+        publishMessagePatch(key.remoteJid, original)
       }
     })
 
@@ -1201,9 +1291,10 @@ async function handleCommand(payload, reply) {
       const canonical = store.canonicalJid(rawJid) || rawJid
       const options = {}
       if (payload.quoted) {
-        const list = store.messages.get(canonical) || []
-        const quoted = list.find((m) => m.id === payload.quoted)
-        if (quoted?.key) options.quoted = { key: quoted.key, message: { conversation: quoted.text } }
+        const quoted = store.findMessage(canonical, String(payload.quoted))
+        if (!quoted || quoted.deleted) throw new Error('Quoted message is no longer available')
+        options.quoted = quotedMessageFor(quoted)
+        if (!options.quoted) throw new Error('Cannot quote this message')
       }
 
       const sent = await sock.sendMessage(canonical, { text }, options)
@@ -1219,11 +1310,18 @@ async function handleCommand(payload, reply) {
       const canonical = store.canonicalJid(rawJid) || rawJid
       const image = validateOutgoingImage(payload.path, payload.mime)
       const caption = String(payload.caption || '').slice(0, 4096)
+      const options = {}
+      if (payload.quoted) {
+        const quoted = store.findMessage(canonical, String(payload.quoted))
+        if (!quoted || quoted.deleted) throw new Error('Quoted message is no longer available')
+        options.quoted = quotedMessageFor(quoted)
+        if (!options.quoted) throw new Error('Cannot quote this message')
+      }
       const sent = await sock.sendMessage(canonical, {
         image: { url: image.path },
         mimetype: image.mimetype,
         caption
-      })
+      }, options)
       if (!sent) throw new Error('sendImage: WhatsApp did not accept the image')
       if (sent.key?.id) {
         try {
@@ -1237,6 +1335,81 @@ async function handleCommand(payload, reply) {
       recordSentMessage(rawJid, sent)
       try { unlinkSync(image.path) } catch { /* runtime file may already be gone */ }
       reply({ t: 'ack', for: 'sendImage', id, ok: true, jid: rawJid })
+      return
+    }
+
+    case 'forward': {
+      if (!payload.jid || !payload.targetJid || !payload.messageId) throw new Error('forward: message and destination required')
+      if (!sock || connection !== 'open') throw new Error('forward: not connected to WhatsApp')
+      const { message } = messageForAction(payload.jid, String(payload.messageId))
+      const original = forwardMessageFor(message)
+      if (!original) throw new Error('This message type cannot be forwarded here')
+      const target = store.canonicalJid(payload.targetJid) || payload.targetJid
+      const sent = await sock.sendMessage(target, { forward: original })
+      if (!sent) throw new Error('WhatsApp did not accept the forwarded message')
+      recordSentMessage(payload.targetJid, sent)
+      reply({ t: 'ack', for: 'forward', id, ok: true, jid: payload.targetJid })
+      return
+    }
+
+    case 'react': {
+      if (!payload.jid || !payload.messageId) throw new Error('react: message required')
+      if (!sock || connection !== 'open') throw new Error('react: not connected to WhatsApp')
+      const { canonical, message } = messageForAction(payload.jid, String(payload.messageId))
+      const emoji = String(payload.emoji || '').slice(0, 16)
+      await sock.sendMessage(canonical, { react: { text: emoji, key: message.key } })
+      setReaction(message, 'me', emoji)
+      publishMessagePatch(canonical, message)
+      reply({ t: 'ack', for: 'react', id, ok: true, jid: payload.jid })
+      return
+    }
+
+    case 'edit': {
+      if (!payload.jid || !payload.messageId) throw new Error('edit: message required')
+      if (!sock || connection !== 'open') throw new Error('edit: not connected to WhatsApp')
+      const { canonical, message } = messageForAction(payload.jid, String(payload.messageId))
+      if (!message.fromMe || !['conversation', 'extendedTextMessage'].includes(message.type))
+        throw new Error('Only your text messages can be edited')
+      const editedText = String(payload.text || '').trim()
+      if (!editedText) throw new Error('edit: empty message')
+      await sock.sendMessage(canonical, { text: editedText, edit: message.key })
+      message.text = editedText
+      message.edited = true
+      publishMessagePatch(canonical, message)
+      reply({ t: 'ack', for: 'edit', id, ok: true, jid: payload.jid })
+      return
+    }
+
+    case 'delete': {
+      if (!payload.jid || !payload.messageId) throw new Error('delete: message required')
+      if (!sock || connection !== 'open') throw new Error('delete: not connected to WhatsApp')
+      const { canonical, message } = messageForAction(payload.jid, String(payload.messageId))
+      if (payload.everyone) {
+        if (!message.fromMe) throw new Error('Only your messages can be deleted for everyone')
+        await sock.sendMessage(canonical, { delete: message.key })
+        message.text = 'Message deleted'
+        message.deleted = true
+        message.imagePath = ''
+        message.media = undefined
+        publishMessagePatch(canonical, message)
+      } else {
+        await sock.chatModify({ deleteForMe: { key: message.key, timestamp: message.ts, deleteMedia: false } }, canonical)
+        const list = store.messages.get(canonical) || []
+        const remaining = list.filter((item) => item.id !== message.id)
+        store.messages.set(canonical, remaining)
+        if (list[list.length - 1]?.id === message.id) {
+          const newest = remaining[remaining.length - 1]
+          const chat = store.chat(canonical)
+          chat.lastTs = newest?.ts || 0
+          chat.lastText = newest?.text || ''
+          chat.lastFromMe = !!newest?.fromMe
+          chat.lastSender = newest?.senderName || ''
+          pushChatsSoon()
+        }
+        store.markDirty()
+        bus.broadcast({ t: 'messageRemoved', jid: canonical, id: message.id })
+      }
+      reply({ t: 'ack', for: 'delete', id, ok: true, jid: payload.jid })
       return
     }
 

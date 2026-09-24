@@ -20,7 +20,7 @@ Panel {
   property var client: null
   property string pluginDir: ""
 
-  // "chats" | "chat" | "settings"; the login screen replaces chats while unlinked.
+  // "chats" | "chat" | "forward" | "settings"; login replaces chats while unlinked.
   property string view: "chats"
   property string activeJid: ""
   property var activeChat: null
@@ -40,6 +40,14 @@ Panel {
   property string searchQuery: ""
   property bool emojiPickerOpen: false
   property int emojiCursorIndex: 0
+  property string selectedMessageId: ""
+  property string quotedMessageId: ""
+  property string editingMessageId: ""
+  property string forwardingMessageId: ""
+  property string forwardingFromJid: ""
+  property bool reactionMode: false
+  property bool deleteConfirmOpen: false
+  property bool deleteForEveryone: false
   readonly property var emojiChoices: ["🙂", "😄", "😂", "😉", "🙁", "😢", "😮", "😛", "❤️", "👍", "🎉", "🙏"]
 
   readonly property var chats: client ? client.chats : []
@@ -82,7 +90,7 @@ Panel {
       list.push(recent[i])
     }
     if (epoch < 0) return []
-    var visible = root.hostWidget && root.hostWidget.isChatDismissed
+    var visible = root.view === "forward" ? list : root.hostWidget && root.hostWidget.isChatDismissed
       ? list.filter(function(chat) { return !root.hostWidget.isChatDismissed(chat) })
       : list
     var matching = root.searchQuery.trim().length > 0
@@ -97,13 +105,22 @@ Panel {
   }
 
   function focusSearch() {
-    if (root.view !== "chats") root.back()
+    if (root.view !== "chats" && root.view !== "forward") root.back()
     if (root.client) root.client.requestChats(200)
     Qt.callLater(function () { searchField.forceActiveFocus() })
   }
 
   function insertEmoji(value) {
     if (!value || root.view !== "chat") return
+    if (root.reactionMode) {
+      if (root.client && root.selectedMessageId)
+        root.client.reactToMessage(root.activeJid, root.selectedMessageId, value)
+      root.reactionMode = false
+      root.emojiPickerOpen = false
+      root.selectedMessageId = ""
+      keyCatcher.forceActiveFocus()
+      return
+    }
     var at = composer.cursorPosition
     composer.insert(at, value)
     composer.cursorPosition = at + value.length
@@ -117,6 +134,7 @@ Panel {
       root.emojiCursorIndex = 0
       Qt.callLater(function () { emojiGrid.forceActiveFocus() })
     } else {
+      root.reactionMode = false
       composer.forceActiveFocus()
     }
   }
@@ -148,6 +166,9 @@ Panel {
     root.activeJid = jid
     root.activeChat = null
     root.messages = []
+    root.selectedMessageId = ""
+    root.quotedMessageId = ""
+    root.editingMessageId = ""
     root.pinToLatest = true
     root.view = "chat"
     root.client.loadMessages(jid, root.messageLimit)
@@ -162,7 +183,16 @@ Panel {
   }
 
   function back() {
+    if (root.view === "forward") {
+      root.view = "chat"
+      root.searchQuery = ""
+      Qt.callLater(function () { keyCatcher.forceActiveFocus() })
+      return
+    }
     root.emojiPickerOpen = false
+    root.selectedMessageId = ""
+    root.quotedMessageId = ""
+    root.editingMessageId = ""
     root.view = "chats"
     root.activeJid = ""
     root.activeChat = null
@@ -210,7 +240,16 @@ Panel {
   }
 
   function moveCursor(delta) {
-    if (root.view !== "chats") return
+    if (root.view === "chat" && root.selectedMessageId) {
+      var index = root.messages.findIndex(function(message) { return message.id === root.selectedMessageId })
+      var nextMessage = Math.max(0, Math.min(root.messages.length - 1, index + delta))
+      if (root.messages[nextMessage]) {
+        root.selectedMessageId = root.messages[nextMessage].id
+        messageList.positionViewAtIndex(nextMessage, ListView.Contain)
+      }
+      return
+    }
+    if (root.view !== "chats" && root.view !== "forward") return
     var count = root.visibleChats.length
     if (count === 0) return
     var next = root.cursorIndex + delta
@@ -221,9 +260,97 @@ Panel {
   }
 
   function activateCursor() {
-    if (root.view !== "chats") return
+    if (root.view !== "chats" && root.view !== "forward") return
     var chat = root.chatAt(root.cursorIndex)
-    if (chat) root.selectChat(chat.jid)
+    if (chat) {
+      if (root.view === "forward") root.forwardTo(chat.jid)
+      else root.selectChat(chat.jid)
+    }
+  }
+
+  function selectedMessage() {
+    return root.messages.find(function(message) { return message.id === root.selectedMessageId }) || null
+  }
+
+  function quotedMessage() {
+    return root.messages.find(function(message) { return message.id === root.quotedMessageId }) || null
+  }
+
+  function selectMessage(id) {
+    root.selectedMessageId = id
+    keyCatcher.forceActiveFocus()
+  }
+
+  function startReply() {
+    if (!root.selectedMessage() || root.selectedMessage().deleted) return
+    root.quotedMessageId = root.selectedMessageId
+    root.editingMessageId = ""
+    root.selectedMessageId = ""
+    composer.forceActiveFocus()
+  }
+
+  function startForward() {
+    if (!root.selectedMessage() || root.selectedMessage().deleted) return
+    root.forwardingMessageId = root.selectedMessageId
+    root.forwardingFromJid = root.activeJid
+    root.view = "forward"
+    root.searchQuery = ""
+    root.cursorIndex = 0
+    if (root.client) root.client.requestChats(200)
+    Qt.callLater(function () { searchField.forceActiveFocus() })
+  }
+
+  function forwardTo(jid) {
+    if (!root.client || !root.client.ready || !root.forwardingMessageId) return
+    if (root.client.forwardMessage(root.forwardingFromJid, root.forwardingMessageId, jid)) {
+      root.statusLine = "Forwarding…"
+      root.view = "chat"
+      root.selectedMessageId = ""
+      root.searchQuery = ""
+      Qt.callLater(function () { keyCatcher.forceActiveFocus() })
+    }
+  }
+
+  function startReaction() {
+    if (!root.selectedMessage() || root.selectedMessage().deleted) return
+    root.reactionMode = true
+    root.emojiPickerOpen = true
+    root.emojiCursorIndex = 0
+    Qt.callLater(function () { emojiGrid.forceActiveFocus() })
+  }
+
+  function removeReaction() {
+    if (!root.client || !root.selectedMessageId) return
+    root.client.reactToMessage(root.activeJid, root.selectedMessageId, "")
+    root.selectedMessageId = ""
+    keyCatcher.forceActiveFocus()
+  }
+
+  function startEdit() {
+    var message = root.selectedMessage()
+    if (!message || !message.fromMe || message.deleted
+        || (message.type !== "conversation" && message.type !== "extendedTextMessage")) return
+    root.editingMessageId = message.id
+    root.quotedMessageId = ""
+    root.selectedMessageId = ""
+    composer.text = message.text || ""
+    composer.forceActiveFocus()
+  }
+
+  function requestDelete(everyone) {
+    var message = root.selectedMessage()
+    if (!message || (everyone && !message.fromMe)) return
+    root.deleteForEveryone = everyone
+    root.deleteConfirmOpen = true
+    Qt.callLater(function () { deleteConfirm.forceActiveFocus() })
+  }
+
+  function confirmDelete() {
+    root.deleteConfirmOpen = false
+    if (root.client && root.selectedMessageId)
+      root.client.deleteMessage(root.activeJid, root.selectedMessageId, root.deleteForEveryone)
+    root.selectedMessageId = ""
+    Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
 
   function sendReply() {
@@ -234,9 +361,17 @@ Panel {
       root.statusLine = "Not connected to WhatsApp"
       return
     }
+    if (root.editingMessageId) {
+      if (root.client.editMessage(root.activeJid, root.editingMessageId, text)) {
+        root.editingMessageId = ""
+        composer.text = ""
+        root.statusLine = "Editing…"
+      }
+      return
+    }
     if (hasPendingImage) {
       if (root.imageSending) return
-      if (root.client.sendImage(root.activeJid, root.pendingImagePath, root.pendingImageMime, text)) {
+      if (root.client.sendImage(root.activeJid, root.pendingImagePath, root.pendingImageMime, text, root.quotedMessageId)) {
         root.imageSending = true
         root.statusLine = "Sending image\u2026"
       } else {
@@ -244,8 +379,9 @@ Panel {
       }
       return
     }
-    if (root.client.sendMessage(root.activeJid, text)) {
+    if (root.client.sendMessage(root.activeJid, text, root.quotedMessageId)) {
       composer.text = ""
+      root.quotedMessageId = ""
       root.statusLine = ""
       typingTimer.stop()
       root.client.setTyping(root.activeJid, "paused")
@@ -419,13 +555,28 @@ Panel {
       root.patchMessage(messageId, { imagePath: imagePath })
     }
 
+    function onMessagePatched(jid, messageId, fields) {
+      root.patchMessage(messageId, fields)
+    }
+
+    function onMessageRemoved(jid, messageId) {
+      if (root.messages.some(function(message) { return message.id === messageId }))
+        root.messages = root.messages.filter(function(message) { return message.id !== messageId })
+    }
+
     function onImageSendAcknowledged(jid) {
       if (jid !== root.pendingImageJid || !root.imageSending) return
       root.clearPendingImage(false)
       composer.clear()
+      root.quotedMessageId = ""
       root.statusLine = ""
       typingTimer.stop()
       root.client.setTyping(jid, "paused")
+    }
+
+    function onActionAcknowledged(action, jid) {
+      if (["forward", "edit", "react", "delete"].indexOf(action) !== -1)
+        root.statusLine = ""
     }
 
     function onCommandFailed(command, message) {
@@ -435,6 +586,8 @@ Panel {
         root.statusLine = message || "Could not send the image"
         if (root.pendingImageJid !== root.activeJid) root.clearPendingImage(true)
       }
+      if (["forward", "react", "edit", "delete"].indexOf(command) !== -1)
+        root.statusLine = message || command + " failed"
       if (command === "refresh") {
         root.refreshing = false
         refreshWatchdog.stop()
@@ -517,18 +670,33 @@ Panel {
       // Composer, logout confirm, and image peek own keys while they are up.
       blocked: composer.activeFocus || emojiButton.activeFocus || emojiGrid.activeFocus
         || priorityField.activeFocus || searchField.activeFocus
-        || root.logoutConfirmOpen || root.peekActive
+        || root.logoutConfirmOpen || root.deleteConfirmOpen || root.peekActive
 
       onCloseRequested: {
         if (root.peekActive) root.peekImagePath = ""
         else if (root.logoutConfirmOpen) root.cancelLogout()
-        else if (root.view === "chat" || root.view === "settings") root.back()
+        else if (root.deleteConfirmOpen) root.deleteConfirmOpen = false
+        else if (root.selectedMessageId) root.selectedMessageId = ""
+        else if (root.view === "chat" || root.view === "forward" || root.view === "settings") root.back()
         else root.close()
       }
       onTabRequested: function (direction) { root.switchPanel(direction) }
       onMoveRequested: function (dx, dy) { root.moveCursor(dy) }
-      onActivateRequested: root.activateCursor()
+      onActivateRequested: {
+        if (root.view === "chat" && root.selectedMessageId) root.startReply()
+        else root.activateCursor()
+      }
       onTextKey: function (text) {
+        if (root.view === "chat" && root.selectedMessageId) {
+          if (text === "r" || text === "R") root.startReply()
+          else if (text === "f" || text === "F") root.startForward()
+          else if (text === "e" || text === "E") root.startEdit()
+          else if (text === "d" || text === "D") root.requestDelete(false)
+          else if (text === "x" || text === "X") root.requestDelete(true)
+          else if (text === "a" || text === "A") root.startReaction()
+          else if (text === "0") root.removeReaction()
+          return
+        }
         if (text === "r" || text === "R") root.refreshChats()
         else if (text === "/") root.focusSearch()
         else if ((text === "s" || text === "S") && root.view === "chats") root.openSettings()
@@ -547,7 +715,7 @@ Panel {
 
           Rectangle {
             id: backButton
-            visible: root.view === "chat" || root.view === "settings"
+            visible: root.view === "chat" || root.view === "forward" || root.view === "settings"
             width: Style.space(26)
             height: Style.space(26)
             anchors.left: parent.left
@@ -588,6 +756,7 @@ Panel {
             Text {
               width: parent.width
               text: root.view === "settings" ? "Settings"
+                : root.view === "forward" ? "Forward to…"
                 : root.view === "chat"
                   ? Model.chatTitle(root.activeChat || { jid: root.activeJid, name: "" })
                   : "WhatsApp"
@@ -622,7 +791,7 @@ Panel {
             spacing: Style.space(2)
 
             PanelActionButton {
-              visible: !root.showLogin && root.view !== "settings"
+              visible: !root.showLogin && (root.view === "chats" || root.view === "chat")
               iconText: "\uf021"
               tooltipText: root.view === "chat" ? "Refresh this conversation" : "Refresh chats"
               enabled: root.linked && !root.refreshing
@@ -782,14 +951,14 @@ Panel {
         Column {
           width: parent.width
           spacing: Style.space(4)
-          visible: !root.showLogin && root.view === "chats"
+          visible: !root.showLogin && (root.view === "chats" || root.view === "forward")
 
           TextField {
             id: searchField
             width: parent.width
             foreground: root.foreground
             accent: root.bar ? root.bar.urgent : Color.accent
-            placeholderText: "Search contacts  /"
+            placeholderText: root.view === "forward" ? "Find recipient…" : "Search contacts  /"
             onTextChanged: root.searchQuery = text
             onActiveFocusChanged: if (activeFocus && root.client) root.client.requestChats(200)
             onAccepted: root.activateCursor()
@@ -910,7 +1079,10 @@ Panel {
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onContainsMouseChanged: if (containsMouse) root.cursorIndex = chatRow.index
-                onClicked: root.selectChat(chatRow.modelData.jid)
+                onClicked: {
+                  if (root.view === "forward") root.forwardTo(chatRow.modelData.jid)
+                  else root.selectChat(chatRow.modelData.jid)
+                }
               }
 
               Rectangle {
@@ -927,7 +1099,9 @@ Panel {
           Text {
             width: parent.width
             visible: root.visibleChats.length > 0
-            text: "↑/↓ choose · Enter open · / search · C hide · S settings · Esc close"
+            text: root.view === "forward"
+              ? "↑/↓ choose · Enter or click to forward · Esc back"
+              : "↑/↓ choose · Enter open · / search · C hide · S settings · Esc close"
             textFormat: Text.PlainText
             color: root.secondaryForeground
             font.family: root.fontFamily
@@ -1011,6 +1185,10 @@ Panel {
                   color: messageRow.modelData.fromMe
                     ? Style.selectedFillFor(root.foreground, root.bar ? root.bar.urgent : Color.accent)
                     : Style.normalFillFor(root.foreground, Color.accent)
+                  border.width: root.selectedMessageId === messageRow.modelData.id ? 2 : 0
+                  border.color: root.bar ? root.bar.urgent : Color.accent
+
+                  TapHandler { onTapped: root.selectMessage(messageRow.modelData.id) }
 
                   Column {
                     id: bubbleContent
@@ -1019,8 +1197,11 @@ Panel {
                     spacing: Style.space(1)
                     width: Math.max(
                       bubbleRow.showSender ? senderLabel.width : 0,
+                      quoteLabel.visible ? quoteLabel.width : 0,
+                      forwardedLabel.visible ? forwardedLabel.width : 0,
                       bubbleRow.hasImage ? photo.width : 0,
                       bodyLabel.visible ? bodyLabel.width : 0,
+                      reactionsLabel.visible ? reactionsLabel.width : 0,
                       Math.min(metaLabel.implicitWidth, bubbleRow.maxInner))
 
                     Text {
@@ -1032,6 +1213,28 @@ Panel {
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
                       font.bold: true
+                      elide: Text.ElideRight
+                    }
+
+                    Text {
+                      id: forwardedLabel
+                      visible: messageRow.modelData.forwarded === true
+                      text: "↪ Forwarded"
+                      color: root.secondaryForeground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+
+                    Text {
+                      id: quoteLabel
+                      visible: !!messageRow.modelData.quote
+                      width: Math.min(implicitWidth, bubbleRow.maxInner)
+                      text: visible ? "↩ " + (messageRow.modelData.quote.sender || "Reply")
+                        + ": " + Model.truncate(messageRow.modelData.quote.text || "Message", 60) : ""
+                      textFormat: Text.PlainText
+                      color: root.bar ? root.bar.urgent : Color.accent
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
                       elide: Text.ElideRight
                     }
 
@@ -1099,11 +1302,21 @@ Panel {
                     }
 
                     Text {
+                      id: reactionsLabel
+                      visible: !!messageRow.modelData.reactions && messageRow.modelData.reactions.length > 0
+                      width: Math.min(implicitWidth, bubbleRow.maxInner)
+                      text: visible ? messageRow.modelData.reactions.map(function(entry) { return entry.emoji }).join(" ") : ""
+                      textFormat: Text.PlainText
+                      font.pixelSize: Style.font.body
+                    }
+
+                    Text {
                       id: metaLabel
                       width: parent.width
                       horizontalAlignment: Text.AlignRight
                       text: {
                         var stampText = Model.messageTimestamp(messageRow.modelData.ts)
+                        if (messageRow.modelData.edited) stampText += " · edited"
                         if (!messageRow.modelData.fromMe) return stampText
                         return stampText + " " + Model.statusGlyph(messageRow.modelData.status)
                       }
@@ -1128,10 +1341,124 @@ Panel {
             font.pixelSize: Style.font.caption
           }
 
+          Flow {
+            width: parent.width
+            spacing: Style.space(4)
+            visible: root.selectedMessageId.length > 0
+            Button {
+              text: "Reply"
+              enabled: !!root.selectedMessage() && !root.selectedMessage().deleted
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              bordered: true
+              onClicked: root.startReply()
+            }
+            Button {
+              text: "Forward"
+              enabled: !!root.selectedMessage() && !root.selectedMessage().deleted
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              bordered: true
+              onClicked: root.startForward()
+            }
+            Button {
+              text: "React"
+              enabled: !!root.selectedMessage() && !root.selectedMessage().deleted
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              bordered: true
+              onClicked: root.startReaction()
+            }
+            Button {
+              visible: !!root.selectedMessage() && !!root.selectedMessage().reactions
+                && root.selectedMessage().reactions.some(function(entry) { return entry.actor === "me" })
+              text: "Unreact"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              bordered: true
+              onClicked: root.removeReaction()
+            }
+            Button {
+              visible: !!root.selectedMessage() && root.selectedMessage().fromMe
+                && !root.selectedMessage().deleted
+                && (root.selectedMessage().type === "conversation" || root.selectedMessage().type === "extendedTextMessage")
+              text: "Edit"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              bordered: true
+              onClicked: root.startEdit()
+            }
+            Button {
+              text: "Delete me"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              bordered: true
+              onClicked: root.requestDelete(false)
+            }
+            Button {
+              visible: !!root.selectedMessage() && root.selectedMessage().fromMe
+              text: "Delete all"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              bordered: true
+              onClicked: root.requestDelete(true)
+            }
+          }
+
+          Text {
+            width: parent.width
+            visible: root.selectedMessageId.length > 0
+            text: "R reply · F forward · A react · 0 unreact · E edit · D delete me · X delete all · ↑/↓ select · Esc cancel"
+            textFormat: Text.PlainText
+            color: root.secondaryForeground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
           // ── Inline reply ───────────────────────────────────────────────
           Column {
             width: parent.width
             spacing: Style.space(6)
+
+            Item {
+              width: parent.width
+              visible: root.quotedMessageId.length > 0 || root.editingMessageId.length > 0
+              height: visible ? Style.space(36) : 0
+              Rectangle {
+                anchors.fill: parent
+                color: Style.normalFillFor(root.foreground, Color.accent)
+                radius: Style.cornerRadius
+              }
+              Text {
+                anchors.left: parent.left
+                anchors.right: cancelQuote.left
+                anchors.leftMargin: Style.space(8)
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.editingMessageId
+                  ? "Editing message"
+                  : "Replying to: " + Model.truncate(root.quotedMessage() ? root.quotedMessage().text : "", 50)
+                textFormat: Text.PlainText
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+              }
+              PanelActionButton {
+                id: cancelQuote
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "\uf00d"
+                tooltipText: "Cancel reply or edit"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: {
+                  root.quotedMessageId = ""
+                  root.editingMessageId = ""
+                  composer.text = ""
+                }
+              }
+            }
 
             Item {
               id: pendingImagePreview
@@ -1199,7 +1526,7 @@ Panel {
                 foreground: root.foreground
                 accent: root.bar ? root.bar.urgent : Color.accent
                 placeholderText: root.linked
-                  ? (pendingImagePreview.visible ? "Caption (optional)\u2026" : "Reply\u2026")
+                  ? (root.editingMessageId ? "Edit message…" : pendingImagePreview.visible ? "Caption (optional)\u2026" : "Reply\u2026")
                   : "Not connected"
                 enabled: root.linked && !root.imageSending
                 onAccepted: root.sendReply()
@@ -1217,10 +1544,19 @@ Panel {
                   } else if (event.key === Qt.Key_E && (event.modifiers & Qt.ControlModifier)) {
                     event.accepted = true
                     root.toggleEmojiPicker()
+                  } else if (event.key === Qt.Key_Up && (event.modifiers & Qt.ControlModifier)
+                      && root.messages.length > 0) {
+                    event.accepted = true
+                    root.selectMessage(root.messages[root.messages.length - 1].id)
                   }
                 }
                 Keys.onEscapePressed: function (event) {
                   if (root.emojiPickerOpen) root.toggleEmojiPicker()
+                  else if (root.editingMessageId || root.quotedMessageId) {
+                    root.editingMessageId = ""
+                    root.quotedMessageId = ""
+                    composer.text = ""
+                  }
                   else if (pendingImagePreview.visible) root.clearPendingImage(true)
                   else if (composer.text.length > 0) composer.text = ""
                   else root.back()
@@ -1247,7 +1583,7 @@ Panel {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 iconText: "\uf1d8"
-                tooltipText: pendingImagePreview.visible ? "Send image" : "Send"
+                tooltipText: root.editingMessageId ? "Save edit" : pendingImagePreview.visible ? "Send image" : "Send"
                 enabled: root.linked && !root.imageSending
                   && (composer.text.trim().length > 0 || pendingImagePreview.visible)
                 foreground: root.foreground
@@ -1263,7 +1599,7 @@ Panel {
 
               Text {
                 width: parent.width
-                text: "Pick an emoji, or type :)  :D  LOL  <3"
+                text: root.reactionMode ? "Choose a reaction" : "Pick an emoji, or type :)  :D  LOL  <3"
                 textFormat: Text.PlainText
                 color: root.secondaryForeground
                 font.family: root.fontFamily
@@ -1323,6 +1659,29 @@ Panel {
               }
             }
           }
+        }
+      }
+
+      ConfirmDialog {
+        id: deleteConfirm
+        anchors.fill: parent
+        opened: root.deleteConfirmOpen
+        z: 11
+        focus: opened
+        message: root.deleteForEveryone
+          ? "Delete this message for everyone?"
+          : "Delete this message for you?"
+        confirmText: "Delete"
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        onCanceled: {
+          root.deleteConfirmOpen = false
+          keyCatcher.forceActiveFocus()
+        }
+        onConfirmed: root.confirmDelete()
+
+        Keys.onPressed: function (event) {
+          if (handleKey(event)) event.accepted = true
         }
       }
 

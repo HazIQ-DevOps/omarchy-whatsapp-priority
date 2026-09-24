@@ -3,7 +3,7 @@
 **Using the shared priority build?** Start with [START_HERE.md](START_HERE.md).
 
 WhatsApp in the Omarchy Quattro bar: unread badge, desktop notifications you can
-click, inline reply without leaving the bar, and one keystroke to the full
+click, chat actions without leaving the bar, and one keystroke to the full
 WhatsApp Web client when you need calls, search, or unsupported media.
 
 <p align="center">
@@ -17,8 +17,8 @@ Two pieces, on purpose:
 
 | Piece | Job |
 |-------|-----|
-| **Bridge daemon** (Node + [Baileys](https://github.com/WhiskeySockets/Baileys)) | Holds one linked-device session, receives messages, sends notifications, sends your replies |
-| **Bar plugin** (QML) | Unread badge, chat list, conversation view, reply box |
+| **Bridge daemon** (Node + [Baileys](https://github.com/WhiskeySockets/Baileys)) | Holds one linked-device session, receives messages, sends notifications, handles chat actions |
+| **Bar plugin** (QML) | Unread badge, chat list, conversation view, message actions, composer |
 
 They talk NDJSON over a unix socket in `$XDG_RUNTIME_DIR` — no localhost port,
 no auth token, no browser running in the background just to get a notification.
@@ -99,6 +99,12 @@ systemctl --user edit omarchy-whatsapp     # Environment=OMARCHY_WHATSAPP_PAIRIN
 | Reply | Type, then `Enter` |
 | Add emoji | Use the smile button or `Ctrl+E` in a chat, then arrows and `Enter`; or type `:)`, `:D`, `LOL`, `;)`, `:(`, `:P`, or `<3` |
 | Send a copied image | In a chat, press `Ctrl+V`, check the preview, optionally add a caption, then press `Enter` or Send |
+| Select a message | Click its bubble, or press `Ctrl+Up` from the composer; use arrows to move between messages |
+| Reply with a quote | Select a message, then press `R` or Reply; type and send |
+| Forward | Select a text, image, or sticker message, press `F`, search for a recipient, then click or press `Enter` |
+| React | Select a message and press `A`; choose an emoji with arrows and `Enter`. Press `0` to remove your reaction |
+| Edit your text | Select your message and press `E`; change it in the composer and send |
+| Delete | Select a message, press `D` to delete for yourself, or `X` to delete your own message for everyone; confirm in the dialog |
 | Back to the chat list | `Escape` |
 | Close the panel | `Escape` from the list |
 | Full WhatsApp Web | Right-click the icon, or use the ⧉ button in the panel |
@@ -107,6 +113,10 @@ systemctl --user edit omarchy-whatsapp     # Environment=OMARCHY_WHATSAPP_PAIRIN
 
 Opening a chat marks it read on every device. Messages arriving while a
 conversation is open are marked read immediately.
+The panel forwards text, images, and stickers that still have their original
+media metadata. For other message types, use the full WhatsApp client. WhatsApp
+may reject edits or deletions outside its allowed window; the panel reports
+the error without changing the stored message.
 
 A single check on an outgoing message means WhatsApp's server accepted it; it
 does not prove the recipient decrypted it. If a recipient sees “Waiting for this

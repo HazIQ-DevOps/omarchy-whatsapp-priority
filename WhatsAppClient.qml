@@ -58,11 +58,14 @@ Item {
   signal messageArrived(string jid, var message, var chat)
   signal messageStatusChanged(string jid, string messageId, int status)
   signal messageMedia(string jid, string messageId, string imagePath)
+  signal messagePatched(string jid, string messageId, var fields)
+  signal messageRemoved(string jid, string messageId)
   signal focusRequested(string jid)
   signal commandFailed(string command, string message)
   signal pairCodeReceived(string code)
   signal sendAcknowledged(string jid)
   signal imageSendAcknowledged(string jid)
+  signal actionAcknowledged(string action, string jid)
 
   function request(payload) {
     var socket = socketLoader.item
@@ -131,9 +134,24 @@ Item {
     return request(payload)
   }
 
-  function sendImage(jid, path, mime, caption) {
+  function sendImage(jid, path, mime, caption, quotedId) {
     if (!jid || !path || !mime) return false
-    return request({ t: "sendImage", jid: jid, path: path, mime: mime, caption: caption || "" })
+    var payload = { t: "sendImage", jid: jid, path: path, mime: mime, caption: caption || "" }
+    if (quotedId) payload.quoted = quotedId
+    return request(payload)
+  }
+
+  function forwardMessage(jid, messageId, targetJid) {
+    return request({ t: "forward", jid: jid, messageId: messageId, targetJid: targetJid })
+  }
+  function reactToMessage(jid, messageId, emoji) {
+    return request({ t: "react", jid: jid, messageId: messageId, emoji: emoji })
+  }
+  function editMessage(jid, messageId, text) {
+    return request({ t: "edit", jid: jid, messageId: messageId, text: text })
+  }
+  function deleteMessage(jid, messageId, everyone) {
+    return request({ t: "delete", jid: jid, messageId: messageId, everyone: everyone })
   }
 
   property bool setupTried: false
@@ -243,6 +261,14 @@ Item {
         root.messageMedia(frame.jid || "", frame.id || "", frame.imagePath || "")
         break
 
+      case "messagePatch":
+        root.messagePatched(frame.jid || "", frame.id || "", frame.fields || {})
+        break
+
+      case "messageRemoved":
+        root.messageRemoved(frame.jid || "", frame.id || "")
+        break
+
       case "focus":
         root.focusRequested(frame.jid || "")
         break
@@ -253,6 +279,7 @@ Item {
 
       case "ack":
         if (frame.for === "sendImage" && frame.jid) root.imageSendAcknowledged(frame.jid)
+        if (frame.for) root.actionAcknowledged(frame.for, frame.jid || "")
         if (frame.jid) root.sendAcknowledged(frame.jid)
         break
 

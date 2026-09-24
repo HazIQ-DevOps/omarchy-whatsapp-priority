@@ -28,6 +28,8 @@ Press `C` on a selected chat to clear its preview from this plugin until a newer
 
 In a conversation, press `Ctrl+V` to attach a copied PNG, JPEG, or WebP image (up to 12 MB). Check the preview, optionally type a caption, then press `Enter` or click Send. `Escape` or the × button removes the pending image without sending it. Plain text still pastes normally.
 
+Click a message bubble, or press `Ctrl+Up` from the reply box, to select a message. Use arrows to move between messages. Press `R` for a quoted reply, `F` to forward it to a searched contact, or `A` to react. Press `0` to remove your reaction. For your own text, press `E` to edit. Press `D` to delete a message for yourself, or `X` to delete your own message for everyone; both delete actions ask for confirmation. Forwarding in this panel supports text, images, and stickers with their original media data. Use the full WhatsApp client for other media types.
+
 ## Privacy and provenance
 
 Each installation creates its own linked-device credentials in `~/.local/state/omarchy-whatsapp/auth/` and a local message cache in `~/.local/state/omarchy-whatsapp/store.json`. Keep those private. This archive contains source code only. The bridge uses [Baileys](https://github.com/WhiskeySockets/Baileys), an unofficial WhatsApp Web client.
