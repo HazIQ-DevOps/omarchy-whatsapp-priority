@@ -420,7 +420,8 @@ Panel {
     id: clipboardCapture
     command: [root.pluginDir + "/bin/omarchy-whatsapp-paste-image", "capture"]
     stdout: StdioCollector {
-      onStreamFinished: function (output) { root.handleClipboardCapture(output) }
+      waitForEnd: true
+      onStreamFinished: root.handleClipboardCapture(text)
     }
     onExited: function (exitCode) {
       if (exitCode !== 0) root.statusLine = "Could not read the clipboard image"
