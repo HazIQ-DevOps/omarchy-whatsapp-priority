@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.ricky.whatsapp",
   "name": "WhatsApp",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "ricky",
   "license": "MIT",
   "description": "WhatsApp for the Omarchy bar: unread badge, notifications, replies, forwarding, reactions, editing, and deleting messages.",
