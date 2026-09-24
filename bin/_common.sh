@@ -57,29 +57,21 @@ wa_node() {
 }
 
 wa_ensure_deps() {
-  [[ -d $WA_DAEMON_DIR/node_modules/baileys ]] && return 0
-
   local node npm
   node="$(wa_node)"
+  if [[ -f $WA_DAEMON_DIR/node_modules/baileys/package.json ]] &&
+    "$node" -e 'const fs = require("node:fs"); const path = require("node:path"); const dir = process.argv[1]; const wanted = JSON.parse(fs.readFileSync(path.join(dir, "package.json"))).dependencies.baileys; const installed = JSON.parse(fs.readFileSync(path.join(dir, "node_modules/baileys/package.json"))).version; process.exit(installed === wanted ? 0 : 1)' "$WA_DAEMON_DIR"; then
+    return 0
+  fi
   npm="$(dirname "$node")/npm"
   [[ -x $npm ]] || npm="$(command -v npm 2>/dev/null || true)"
   [[ -n $npm && -x $npm ]] || wa_die "npm not found; run: (cd $WA_DAEMON_DIR && npm ci)"
 
-  echo "omarchy-whatsapp: installing daemon dependencies (first run only)..." >&2
+  echo "omarchy-whatsapp: installing pinned daemon dependencies..." >&2
   # --no-bin-links keeps the plugin folder free of symlinks, which Omarchy's
   # plugin validation rejects.
-  #
-  # npm 12 defaults allow-git to none; baileys@6.7.24 pulls libsignal from
-  # git. Fetch that public repo over HTTPS so a missing GitHub SSH key
-  # cannot fail the clone (the lockfile used to record git+ssh).
   (cd "$WA_DAEMON_DIR" &&
     PATH="$(dirname "$node"):$PATH" \
-    npm_config_allow_git="${npm_config_allow_git:-all}" \
-    GIT_CONFIG_COUNT=2 \
-    GIT_CONFIG_KEY_0='url.https://github.com/.insteadOf' \
-    GIT_CONFIG_VALUE_0='ssh://git@github.com/' \
-    GIT_CONFIG_KEY_1='url.https://github.com/.insteadOf' \
-    GIT_CONFIG_VALUE_1='git@github.com:' \
     "$npm" ci --omit=dev --no-bin-links --no-audit --no-fund) \
     || wa_die "dependency install failed"
   find "$WA_DAEMON_DIR/node_modules" -type l -delete 2>/dev/null || true

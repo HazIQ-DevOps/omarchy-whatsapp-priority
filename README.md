@@ -186,6 +186,7 @@ omarchy bar move io.github.ricky.whatsapp --section right
 |------|----------|
 | `~/.local/state/omarchy-whatsapp/auth/` | Linked-device credentials and Signal keys (`0700`) |
 | `~/.local/state/omarchy-whatsapp/store.json` | Recent chats and up to 200 messages per chat (`0600`) |
+| `~/.local/state/omarchy-whatsapp/retry/` | Original sent message payloads for accurate resend requests; at most 1,000 entries retained for up to seven days (`0700` directory, `0600` files) |
 | `$XDG_RUNTIME_DIR/omarchy-whatsapp.sock` | Control socket (`0600`, cleared on logout) |
 
 Nothing leaves your machine except traffic to WhatsApp itself. Incoming images
@@ -194,7 +195,7 @@ can appear inline. Other media, including voice notes, uses placeholders; open
 the full client for those. A copied image remains in a private runtime file
 until you send or remove it.
 
-`omarchy-whatsapp logout` unlinks the device and deletes all three.
+`omarchy-whatsapp logout` unlinks the device and clears credentials, chats, retry payloads, and media.
 
 Disabling the bar widget with `omarchy plugin disable io.github.ricky.whatsapp`
 also stops and disables the WhatsApp user service. Linked-device credentials
@@ -207,10 +208,11 @@ without another QR scan. To stop the service and delete local data, use
 - **Baileys is an unofficial WhatsApp Web client.** It is not endorsed by
   WhatsApp, and using it carries some risk to your account. It is the same
   mechanism every WhatsApp bridge on Linux uses, but the risk is yours.
-- **The version is pinned deliberately.** `baileys@6.7.24`. npm's `latest`
-  (6.17.16) is deprecated for a message-spoofing zero-day
-  ([GHSA-qvv5-jq5g-4cgg](https://github.com/WhiskeySockets/Baileys/security/advisories/GHSA-qvv5-jq5g-4cgg));
-  do not bump it without checking that advisory.
+- **The protocol library is pinned to `baileys@7.0.0-rc14`.** This release
+  supports LID session migration and automatic session recovery. The older
+  6.x library could fail to decrypt messages when an address changed between
+  its phone-number and LID forms. Startup checks the installed version and
+  installs the pinned dependencies when needed.
 - **Plugins run unsandboxed inside `omarchy-shell`.** This one keeps its network
   and protocol work in a separate process for exactly that reason — the QML side
   only parses JSON from a socket it owns — but you should still read the code
@@ -235,13 +237,20 @@ interpreter: `systemctl --user edit omarchy-whatsapp` and add
 
 **Daemon restart-loops / `EALLOWGIT` / `Permission denied (publickey)`**
 
-The first start installs daemon dependencies from the lockfile.
-`baileys@6.7.24` pulls `libsignal` from GitHub, and npm 12 refuses git
-dependencies unless `allow-git` is set. Setup now opts in for this
-project and clones over HTTPS, so a GitHub SSH key is not required.
-Update the plugin if you installed before that fix — an older lockfile
-recorded `git+ssh`. `git` must be on `PATH` (it is, if you installed
-with `omarchy plugin add`).
+Update the plugin: the current dependency lockfile uses npm registry packages
+for both Baileys and libsignal. It no longer needs a GitHub SSH key or npm's
+git-dependency opt-in. Dependencies are installed on first start or when the
+pinned Baileys version changes.
+
+**Recipients see "Waiting for this message"**
+
+The bridge needs a working Signal session for each recipient device. This
+build includes LID session migration and stores original outgoing payloads
+so retry requests after a daemon restart retain quotes, media metadata,
+reactions, edits, and deletes. A server acknowledgement alone does not prove
+that a recipient decrypted a message. Test with a newly sent message and
+confirm it is readable on the receiving phone; older placeholders may need
+the sender to send the content again.
 
 **Widget not in the bar**
 

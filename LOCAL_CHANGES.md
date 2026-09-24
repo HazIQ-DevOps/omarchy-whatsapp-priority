@@ -11,6 +11,7 @@ This installation is based on [srineshr1/omarchy-whatsapp](https://github.com/sr
 - Search chats by name, group sender, or number from the top of the chat list (`/` focuses search). The hover card's search button opens it directly.
 - Use the emoji picker (`Ctrl+E`, arrows, `Enter`) or typed shortcuts such as `:)`, `:D`, `LOL`, and `<3` in replies and captions.
 - Outgoing messages use the phone JID when an internal linked-device ID has a known phone mapping. libsignal session dumps are redacted before reaching the local journal.
-- The dependency lockfile updates transitive `sharp` to 0.35.4, the patched version for [GHSA-rgj7-g3m4-5g8c](https://github.com/advisories/GHSA-rgj7-g3m4-5g8c), while keeping `baileys` at 6.7.24.
+- Baileys is pinned to 7.0.0-rc14 for PN/LID session migration and session recovery. Contact mapping uses the current protocol fields and mapping API. The lockfile uses npm registry packages, including libsignal; startup detects outdated installed versions.
+- Original outgoing protobuf payloads are retained in a private, bounded retry cache so resends remain accurate across restarts. Offline tests cover real Signal encryption through an address change and restart, and exact retry payload preservation for text, quotes, images, reactions, edits, and revokes.
 
 The linked-device bridge, chat storage, and reply behavior remain from the upstream project.

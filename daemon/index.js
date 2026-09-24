@@ -8,8 +8,6 @@ import makeWASocket, {
   jidNormalizedUser,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
-  USyncQuery,
-  USyncUser,
   normalizeMessageContent,
   getContentType
 } from 'baileys'
@@ -20,11 +18,12 @@ import { logger, waLogger } from './lib/logger.js'
 import { Store, normalizeJid } from './lib/store.js'
 import { Notifier } from './lib/notify.js'
 import { Bus } from './lib/server.js'
-import { extractImage, isGroupJid, isIgnorableChat, isPhotoPlaceholder, isSilent, messageText, messageType, prettyJid } from './lib/message.js'
+import { extractImage, isGroupJid, isIgnorableChat, isSilent, messageText, messageType, prettyJid } from './lib/message.js'
 import { existingMediaPath, mediaPathFor, MediaCache } from './lib/media.js'
 import { validateOutgoingImage } from './lib/outgoing-image.js'
 import { installSignalConsoleRedaction } from './lib/signal-console.js'
-import { quotedMessageFor, forwardMessageFor } from './lib/message-actions.js'
+import { contentForStoredMessage, quotedMessageFor, forwardMessageFor } from './lib/message-actions.js'
+import { RetryCache } from './lib/retry-cache.js'
 import {
   applyChatNotificationPreferences,
   isChatMuted,
@@ -67,6 +66,7 @@ const MSG_READ = 4
 const MSG_PLAYED = 5
 
 const store = new Store()
+const retryCache = new RetryCache(join(stateDir, 'retry'))
 const notifier = new Notifier()
 const media = new MediaCache()
 const bus = new Bus(socketPath)
@@ -216,6 +216,7 @@ function senderNameFor(chatJid, message) {
   if (isGroupJid(chatJid) && participant) {
     return store.lookupName(participant)
       || store.lookupName(message.key?.participantPn)
+      || store.lookupName(message.key?.participantAlt)
       || message.pushName
       || prettyJid(participant)
   }
@@ -224,29 +225,39 @@ function senderNameFor(chatJid, message) {
 
 function learnAliasesFromMessage(raw) {
   const key = raw?.key || {}
-  if (key.remoteJid && (key.remoteJidAlt || key.senderPn)) {
-    store.alias(key.remoteJid, key.remoteJidAlt || key.senderPn)
+  const chatAlt = key.remoteJidAlt || (!key.fromMe && !isGroupJid(key.remoteJid) ? key.senderPn : '')
+  if (key.remoteJid && chatAlt) {
+    store.alias(key.remoteJid, chatAlt)
   }
   if (key.senderLid && key.senderPn) store.alias(key.senderLid, key.senderPn)
   if (key.participant && key.participantPn) store.alias(key.participant, key.participantPn)
+  if (key.participant && key.participantAlt) store.alias(key.participant, key.participantAlt)
   if (key.participantLid && key.participantPn) store.alias(key.participantLid, key.participantPn)
 }
 
-function storedToWaContent(message) {
-  if (!message) return undefined
-  if (message.media) {
-    const node = { mimetype: message.media.mimetype }
-    if (message.text && !isPhotoPlaceholder(message.text)) node.caption = message.text
-    return message.media.kind === 'sticker' ? { stickerMessage: node } : { imageMessage: node }
-  }
-  if (!message.text) return undefined
-  return { conversation: message.text }
+function rememberRetryPayload(raw) {
+  try { retryCache.remember(raw) }
+  catch (err) { logger.warn({ code: err.code }, 'retry: could not persist original payload') }
 }
 
 async function getStoredMessage(key) {
   if (!key?.id) return undefined
+  const original = retryCache.get(key.id)
+  if (original) {
+    logger.info('retry: restored original payload')
+    return original
+  }
   const found = store.findMessage(key.remoteJid, key.id)
-  return storedToWaContent(found)
+  const fallback = contentForStoredMessage(found) || undefined
+  logger.info({ available: !!fallback }, 'retry: legacy message lookup')
+  return fallback
+}
+
+async function sendWhatsAppMessage(jid, content, options) {
+  const sent = await sock.sendMessage(jid, content, options)
+  // Silent actions are absent from the display store but still need retries.
+  rememberRetryPayload(sent)
+  return sent
 }
 
 const RECENT_APPEND_WINDOW_S = 5 * 60
@@ -393,8 +404,7 @@ function ingest(chatJid, raw) {
   if (isSilent(raw.message)) return null
 
   learnAliasesFromMessage(raw)
-  const hintedPn = raw?.key?.remoteJidAlt || raw?.key?.senderPn
-  if (hintedPn) store.alias(chatJid, hintedPn)
+  const hintedPn = raw?.key?.remoteJidAlt
   const canonicalTarget = store.canonicalJid(chatJid) || store.canonicalJid(hintedPn) || chatJid
   if (String(canonicalTarget).endsWith('@lid')) scheduleLidResolve(canonicalTarget)
 
@@ -505,19 +515,9 @@ function scheduleLidResolve(jid) {
 
 async function resolveOneLid(lid) {
   if (!sock || connection !== 'open') return
-  const query = new USyncQuery().withContactProtocol().withLIDProtocol()
-  query.withUser(new USyncUser().withLid(lid).withId(lid))
-  const result = await sock.executeUSyncQuery(query)
-  let merged = false
-  for (const row of result?.list || []) {
-    const resolvedLid = asLidJid(row.lid || (String(row.id || '').endsWith('@lid') ? row.id : ''))
-    const pn = String(row.id || '').endsWith('@s.whatsapp.net') ? row.id : ''
-    if (resolvedLid && pn) {
-      store.alias(resolvedLid, pn)
-      merged = true
-    }
-  }
-  if (merged) {
+  const pn = await sock.signalRepository.lidMapping.getPNForLID(lid)
+  if (pn) {
+    store.alias(lid, pn)
     store.applyNamesToChats()
     pushChats()
   }
@@ -531,9 +531,9 @@ async function resolveContactLids() {
     for (let i = 0; i < phones.length; i += 25) {
       if (!sock || connection !== 'open') return
       try {
-        const rows = await sock.onWhatsApp(...phones.slice(i, i + 25))
+        const rows = await sock.signalRepository.lidMapping.getLIDsForPNs(phones.slice(i, i + 25))
         for (const row of rows || []) {
-          if (row?.jid && row?.lid) store.alias(row.jid, asLidJid(row.lid))
+          if (row?.pn && row?.lid) store.alias(row.pn, asLidJid(row.lid))
         }
       } catch (err) {
         logger.debug({ err }, 'contact lid lookup failed')
@@ -546,16 +546,7 @@ async function resolveContactLids() {
       .slice(0, 50)
     if (unknownLids.length) {
       try {
-        const query = new USyncQuery().withContactProtocol().withLIDProtocol()
-        for (const chat of unknownLids) {
-          query.withUser(new USyncUser().withLid(chat.jid).withId(chat.jid))
-        }
-        const result = await sock.executeUSyncQuery(query)
-        for (const row of result?.list || []) {
-          const lid = asLidJid(row.lid || (String(row.id || '').endsWith('@lid') ? row.id : ''))
-          const pn = String(row.id || '').endsWith('@s.whatsapp.net') ? row.id : ''
-          if (lid && pn) store.alias(lid, pn)
-        }
+        for (const chat of unknownLids) await resolveOneLid(chat.jid)
       } catch (err) {
         logger.debug({ err }, 'lid usync failed')
       }
@@ -573,7 +564,7 @@ async function resolveContactLids() {
 function applyContacts(contacts) {
   for (const contact of contacts || []) {
     if (!contact?.id && !contact?.lid && !contact?.jid) continue
-    const ids = [contact.id, contact.lid, contact.jid].filter(Boolean).map((id) => normalizeJid(id) || id)
+    const ids = [contact.id, contact.lid, contact.jid, contact.phoneNumber].filter(Boolean).map((id) => normalizeJid(id) || id)
     for (let i = 1; i < ids.length; i++) store.alias(ids[0], ids[i])
     const addressBookName = contact.name || contact.verifiedName
     const pushName = contact.notify
@@ -940,7 +931,7 @@ async function connect() {
       pushChatsSoon()
     })
 
-    sock.ev.on('chats.phoneNumberShare', ({ lid, jid }) => {
+    sock.ev.on('lid-mapping.update', ({ lid, pn: jid }) => {
       if (sock !== thisSocket) return
       if (lid && jid) {
         store.alias(lid, jid)
@@ -974,6 +965,7 @@ async function connect() {
       const before = store.totalUnread()
       let ingested = false
       for (const raw of messages || []) {
+        rememberRetryPayload(raw)
         const jid = raw?.key?.remoteJid
         if (!jid) continue
         const result = ingest(jid, raw)
@@ -1131,6 +1123,7 @@ function wipeAuth() {
   }
   ensureDirs()
   store.clear()
+  retryCache.clear()
   groupNames.clear()
   try {
     rmSync(mediaDir, { recursive: true, force: true })
@@ -1297,7 +1290,7 @@ async function handleCommand(payload, reply) {
         if (!options.quoted) throw new Error('Cannot quote this message')
       }
 
-      const sent = await sock.sendMessage(canonical, { text }, options)
+      const sent = await sendWhatsAppMessage(canonical, { text }, options)
       recordSentMessage(rawJid, sent)
       reply({ t: 'ack', id, ok: true, jid: rawJid })
       return
@@ -1317,7 +1310,7 @@ async function handleCommand(payload, reply) {
         options.quoted = quotedMessageFor(quoted)
         if (!options.quoted) throw new Error('Cannot quote this message')
       }
-      const sent = await sock.sendMessage(canonical, {
+      const sent = await sendWhatsAppMessage(canonical, {
         image: { url: image.path },
         mimetype: image.mimetype,
         caption
@@ -1345,7 +1338,7 @@ async function handleCommand(payload, reply) {
       const original = forwardMessageFor(message)
       if (!original) throw new Error('This message type cannot be forwarded here')
       const target = store.canonicalJid(payload.targetJid) || payload.targetJid
-      const sent = await sock.sendMessage(target, { forward: original })
+      const sent = await sendWhatsAppMessage(target, { forward: original })
       if (!sent) throw new Error('WhatsApp did not accept the forwarded message')
       recordSentMessage(payload.targetJid, sent)
       reply({ t: 'ack', for: 'forward', id, ok: true, jid: payload.targetJid })
@@ -1357,7 +1350,7 @@ async function handleCommand(payload, reply) {
       if (!sock || connection !== 'open') throw new Error('react: not connected to WhatsApp')
       const { canonical, message } = messageForAction(payload.jid, String(payload.messageId))
       const emoji = String(payload.emoji || '').slice(0, 16)
-      await sock.sendMessage(canonical, { react: { text: emoji, key: message.key } })
+      await sendWhatsAppMessage(canonical, { react: { text: emoji, key: message.key } })
       setReaction(message, 'me', emoji)
       publishMessagePatch(canonical, message)
       reply({ t: 'ack', for: 'react', id, ok: true, jid: payload.jid })
@@ -1372,7 +1365,7 @@ async function handleCommand(payload, reply) {
         throw new Error('Only your text messages can be edited')
       const editedText = String(payload.text || '').trim()
       if (!editedText) throw new Error('edit: empty message')
-      await sock.sendMessage(canonical, { text: editedText, edit: message.key })
+      await sendWhatsAppMessage(canonical, { text: editedText, edit: message.key })
       message.text = editedText
       message.edited = true
       publishMessagePatch(canonical, message)
@@ -1386,7 +1379,7 @@ async function handleCommand(payload, reply) {
       const { canonical, message } = messageForAction(payload.jid, String(payload.messageId))
       if (payload.everyone) {
         if (!message.fromMe) throw new Error('Only your messages can be deleted for everyone')
-        await sock.sendMessage(canonical, { delete: message.key })
+        await sendWhatsAppMessage(canonical, { delete: message.key })
         message.text = 'Message deleted'
         message.deleted = true
         message.imagePath = ''
@@ -1571,6 +1564,7 @@ async function main() {
   if (claimPid()) await sleep(1500)
   purgeStaleQrFiles()
   store.load()
+  retryCache.load()
   for (const chat of store.chats.values()) scheduleMuteExpiry(chat)
 
   media.getSocket = () => sock
