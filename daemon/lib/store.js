@@ -425,6 +425,21 @@ export class Store {
     return this.sortedChats().slice(0, Math.max(1, limit))
   }
 
+  inboxChatList(limit = 200) {
+    const max = Math.max(1, limit)
+    const individuals = []
+    const groups = []
+    const archived = []
+    for (const chat of this.sortedChats()) {
+      if (chat.archived) archived.push(chat)
+      else if (chat.isGroup) groups.push(chat)
+      else individuals.push(chat)
+    }
+    // Each category gets its own allowance, so active groups cannot crowd
+    // older individual conversations out of the data sent to the panel.
+    return individuals.slice(0, max).concat(groups.slice(0, max), archived.slice(0, max))
+  }
+
   messageList(jid, limit = 60) {
     const key = this.canonicalJid(jid) || normalizeJid(jid) || jid
     const list = this.messages.get(key) || []

@@ -84,6 +84,27 @@ function matchesChatSearch(chat, query) {
     || String(chat.jid || "").toLocaleLowerCase().indexOf(needle) !== -1
 }
 
+// Keep personal conversations prominent. A search shows matching groups even
+// while the normal group section is collapsed.
+function inboxRows(chats, view, query, groupsExpanded, chatLimit, isDismissed) {
+  var list = view === "forward" ? chats : chats.filter(function(chat) { return !chat.archived })
+  var searching = String(query || "").trim().length > 0
+  var matching = searching
+    ? list.filter(function(chat) { return matchesChatSearch(chat, query) })
+    : view === "forward" ? list : list.filter(function(chat) { return !isDismissed(chat) })
+  var individuals = matching.filter(function(chat) { return !chat.isGroup })
+  var groups = matching.filter(function(chat) { return chat.isGroup })
+  var limit = searching ? 200 : Math.max(1, chatLimit)
+  if (view === "forward" || searching)
+    return individuals.slice(0, limit).concat(groups.slice(0, limit))
+  var rows = individuals.slice(0, limit)
+  if (groups.length > 0) {
+    rows.push({ isGroupHeader: true, groupCount: groups.length })
+    if (groupsExpanded) rows = rows.concat(groups.slice(0, limit))
+  }
+  return rows
+}
+
 // Expand whole typed shortcuts only, so "LOL" in a longer word or a URL is
 // left alone. The same conversion applies to captions and ordinary replies.
 function expandEmoticons(text) {

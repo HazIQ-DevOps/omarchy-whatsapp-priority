@@ -6,6 +6,9 @@ WhatsApp in the Omarchy Quattro bar: unread badge, desktop notifications you can
 click, chat actions without leaving the bar, and one keystroke to the full
 WhatsApp Web client when you need calls, search, or unsupported media.
 
+The main chat list puts individuals first and keeps groups in a collapsed
+section. Archived chats are omitted from that list and its search.
+
 <p align="center">
   <img src="docs/inbox.png" alt="Chat list in the Omarchy bar" width="48%" />
   <img src="docs/chat.png" alt="Conversation with inline reply" width="48%" />

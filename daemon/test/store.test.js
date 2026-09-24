@@ -35,6 +35,25 @@ test('attention chats include unread conversations beyond the recent list', () =
   assert.equal(store.attentionChats().some((chat) => chat.jid === older.jid), true)
 })
 
+test('inbox list keeps individuals available when groups dominate recent activity', () => {
+  const store = new Store()
+  const person = store.chat('person@s.whatsapp.net')
+  person.lastTs = 1
+  for (let i = 0; i < 75; i++) {
+    const group = store.chat(`${i + 1000}@g.us`)
+    group.lastTs = i + 2
+    group.muted = true
+  }
+  const archived = store.chat('archived@s.whatsapp.net')
+  archived.lastTs = 100
+  archived.archived = true
+
+  const rows = store.inboxChatList(40)
+  assert.equal(rows[0].jid, person.jid)
+  assert.equal(rows.filter((chat) => chat.isGroup).length, 40)
+  assert.equal(rows.at(-1).jid, archived.jid)
+})
+
 test('alias merge preserves an active mute from the secondary chat', () => {
   const store = new Store()
   const lid = store.chat('123@lid')

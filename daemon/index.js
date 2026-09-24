@@ -171,7 +171,7 @@ function state() {
 }
 
 function snapshot() {
-  return { ...state(), t: 'state', chats: store.chatList(60) }
+  return { ...state(), t: 'state', chats: store.inboxChatList() }
 }
 
 function pushState() {
@@ -182,8 +182,8 @@ function pushState() {
   bus.broadcast(next)
 }
 
-function pushChats(limit = 60) {
-  bus.broadcast({ t: 'chats', chats: store.chatList(limit), unread: store.totalUnread(), attentionChats: store.attentionChats() })
+function pushChats(limit = 200) {
+  bus.broadcast({ t: 'chats', chats: store.inboxChatList(limit), unread: store.totalUnread(), attentionChats: store.attentionChats() })
 }
 
 function pushChatsSoon() {
@@ -1210,7 +1210,7 @@ async function handleCommand(payload, reply) {
       return
 
     case 'chats':
-      reply({ t: 'chats', chats: store.chatList(payload.limit || 60), unread: store.totalUnread(), attentionChats: store.attentionChats() })
+      reply({ t: 'chats', chats: store.inboxChatList(payload.limit || 200), unread: store.totalUnread(), attentionChats: store.attentionChats() })
       return
 
     case 'refresh': {
@@ -1227,7 +1227,7 @@ async function handleCommand(payload, reply) {
           refreshInFlight = false
         }
       }
-      const chats = store.chatList(limit)
+      const chats = store.inboxChatList(limit)
       const unread = store.totalUnread()
       pushState()
       bus.broadcast({ t: 'chats', chats, unread, attentionChats: store.attentionChats() })

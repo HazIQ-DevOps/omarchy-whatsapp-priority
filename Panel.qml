@@ -38,6 +38,7 @@ Panel {
   property string pasteRequestJid: ""
   property bool imageSending: false
   property string searchQuery: ""
+  property bool groupsExpanded: false
   property bool emojiPickerOpen: false
   property int emojiCursorIndex: 0
   property string selectedMessageId: ""
@@ -78,8 +79,10 @@ Panel {
   function chatAt(index) {
     var list = root.visibleChats
     if (index < 0 || index >= list.length) return null
-    return list[index]
+    return list[index].isGroupHeader ? null : list[index]
   }
+
+  readonly property int inboxFetchLimit: Math.max(200, root.chatLimit * 4)
 
   readonly property var visibleChats: {
     var epoch = root.client ? root.client.chatsEpoch : 0
@@ -90,14 +93,17 @@ Panel {
       list.push(recent[i])
     }
     if (epoch < 0) return []
-    var visible = root.view === "forward" ? list : root.hostWidget && root.hostWidget.isChatDismissed
-      ? list.filter(function(chat) { return !root.hostWidget.isChatDismissed(chat) })
-      : list
-    var matching = root.searchQuery.trim().length > 0
-      ? list.filter(function(chat) { return Model.matchesChatSearch(chat, root.searchQuery) })
-      : visible
-    return matching.slice(0, root.searchQuery.trim().length > 0 ? 200 : Math.max(1, root.chatLimit))
+    return Model.inboxRows(list, root.view, root.searchQuery, root.groupsExpanded,
+      root.chatLimit, function(chat) {
+        return root.hostWidget && root.hostWidget.isChatDismissed
+          ? root.hostWidget.isChatDismissed(chat) : false
+      })
   }
+  readonly property int groupHeaderIndex: root.visibleChats.findIndex(function(chat) { return chat.isGroupHeader })
+  readonly property var visibleIndividualChats: root.groupHeaderIndex < 0
+    ? root.visibleChats : root.visibleChats.slice(0, root.groupHeaderIndex)
+  readonly property var visibleGroupChats: root.groupHeaderIndex < 0
+    ? [] : root.visibleChats.slice(root.groupHeaderIndex + 1)
 
   onSearchQueryChanged: {
     root.cursorIndex = 0
@@ -106,7 +112,7 @@ Panel {
 
   function focusSearch() {
     if (root.view !== "chats" && root.view !== "forward") root.back()
-    if (root.client) root.client.requestChats(200)
+    if (root.client) root.client.requestChats(root.inboxFetchLimit)
     Qt.callLater(function () { searchField.forceActiveFocus() })
   }
 
@@ -256,11 +262,19 @@ Panel {
     if (next < 0) next = 0
     if (next > count - 1) next = count - 1
     root.cursorIndex = next
-    chatList.positionViewAtIndex(next, ListView.Contain)
+    if (root.groupHeaderIndex >= 0 && next > root.groupHeaderIndex)
+      groupList.positionViewAtIndex(next - root.groupHeaderIndex - 1, ListView.Contain)
+    else if (next < root.groupHeaderIndex || root.groupHeaderIndex < 0)
+      chatList.positionViewAtIndex(next, ListView.Contain)
   }
 
   function activateCursor() {
     if (root.view !== "chats" && root.view !== "forward") return
+    var row = root.visibleChats[root.cursorIndex]
+    if (row && row.isGroupHeader) {
+      root.groupsExpanded = !root.groupsExpanded
+      return
+    }
     var chat = root.chatAt(root.cursorIndex)
     if (chat) {
       if (root.view === "forward") root.forwardTo(chat.jid)
@@ -296,7 +310,7 @@ Panel {
     root.view = "forward"
     root.searchQuery = ""
     root.cursorIndex = 0
-    if (root.client) root.client.requestChats(200)
+    if (root.client) root.client.requestChats(root.inboxFetchLimit)
     Qt.callLater(function () { searchField.forceActiveFocus() })
   }
 
@@ -458,7 +472,7 @@ Panel {
     root.statusLine = "Refreshing\u2026"
     var ok = root.client.refreshInbox(
       root.view === "chat" ? root.activeJid : "",
-      root.chatLimit,
+      root.inboxFetchLimit,
       root.messageLimit
     )
     if (!ok) {
@@ -509,7 +523,7 @@ Panel {
     root.statusLine = ""
     if (root.client) {
       root.client.refresh()
-      root.client.requestChats(root.chatLimit)
+      root.client.requestChats(root.inboxFetchLimit)
       if (root.view === "chat" && root.activeJid) {
         root.client.loadMessages(root.activeJid, root.messageLimit)
         root.client.markRead(root.activeJid)
@@ -592,7 +606,7 @@ Panel {
         root.refreshing = false
         refreshWatchdog.stop()
         if (message && message.indexOf("unknown command") !== -1 && root.client) {
-          root.client.requestChats(root.chatLimit)
+          root.client.requestChats(root.inboxFetchLimit)
           if (root.view === "chat" && root.activeJid)
             root.client.loadMessages(root.activeJid, root.messageLimit)
           root.statusLine = ""
@@ -960,7 +974,7 @@ Panel {
             accent: root.bar ? root.bar.urgent : Color.accent
             placeholderText: root.view === "forward" ? "Find recipient…" : "Search contacts  /"
             onTextChanged: root.searchQuery = text
-            onActiveFocusChanged: if (activeFocus && root.client) root.client.requestChats(200)
+            onActiveFocusChanged: if (activeFocus && root.client) root.client.requestChats(root.inboxFetchLimit)
             onAccepted: root.activateCursor()
             Keys.onEscapePressed: function(event) {
               if (searchField.text.length > 0) searchField.clear()
@@ -979,30 +993,32 @@ Panel {
             wrapMode: Text.WordWrap
           }
 
-          ListView {
-            id: chatList
+          Text {
             width: parent.width
-            visible: root.visibleChats.length > 0
-            height: Math.min(contentHeight, Style.space(300))
-            model: root.visibleChats
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            interactive: contentHeight > height
-            currentIndex: root.cursorIndex
-            spacing: Style.space(3)
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            visible: root.view === "chats" && root.searchQuery.trim().length === 0
+              && root.visibleChats.length > 0
+            text: "Individuals"
+            color: root.secondaryForeground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
 
-            delegate: CursorSurface {
+          Component {
+            id: chatRowComponent
+            CursorSurface {
               id: chatRow
               required property var modelData
               required property int index
+              readonly property int globalIndex: (ListView.view === groupList
+                ? root.groupHeaderIndex + 1 : 0) + index
 
               width: ListView.view.width
               implicitHeight: rowText.implicitHeight + Style.space(16)
               height: implicitHeight
               foreground: root.foreground
               accent: root.bar ? root.bar.urgent : Color.accent
-              hasCursor: root.cursorIndex === chatRow.index
+              hasCursor: root.cursorIndex === chatRow.globalIndex
 
               Column {
                 id: rowText
@@ -1078,7 +1094,7 @@ Panel {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onContainsMouseChanged: if (containsMouse) root.cursorIndex = chatRow.index
+                onContainsMouseChanged: if (containsMouse) root.cursorIndex = chatRow.globalIndex
                 onClicked: {
                   if (root.view === "forward") root.forwardTo(chatRow.modelData.jid)
                   else root.selectChat(chatRow.modelData.jid)
@@ -1096,12 +1112,80 @@ Panel {
             }
           }
 
+          ListView {
+            id: chatList
+            width: parent.width
+            visible: root.visibleIndividualChats.length > 0
+            height: Math.min(contentHeight, Style.space(300))
+            model: root.visibleIndividualChats
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            interactive: contentHeight > height
+            currentIndex: root.cursorIndex
+            spacing: Style.space(3)
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+            delegate: chatRowComponent
+          }
+
+          CursorSurface {
+            id: groupToggle
+            width: parent.width
+            height: Style.space(34)
+            visible: root.groupHeaderIndex >= 0
+            foreground: root.foreground
+            accent: root.bar ? root.bar.urgent : Color.accent
+            hasCursor: root.cursorIndex === root.groupHeaderIndex
+
+            Text {
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.margins: Style.space(8)
+              text: (root.groupsExpanded ? "▾" : "▸") + "  Groups ("
+                + (root.visibleChats[root.groupHeaderIndex]
+                  ? root.visibleChats[root.groupHeaderIndex].groupCount : 0) + ")"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+              elide: Text.ElideRight
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onContainsMouseChanged: if (containsMouse) root.cursorIndex = root.groupHeaderIndex
+              onClicked: {
+                root.cursorIndex = root.groupHeaderIndex
+                root.groupsExpanded = !root.groupsExpanded
+                keyCatcher.forceActiveFocus()
+              }
+            }
+          }
+
+          ListView {
+            id: groupList
+            width: parent.width
+            visible: root.visibleGroupChats.length > 0
+            height: Math.min(contentHeight, Style.space(220))
+            model: root.visibleGroupChats
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            interactive: contentHeight > height
+            currentIndex: root.cursorIndex - root.groupHeaderIndex - 1
+            spacing: Style.space(3)
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            delegate: chatRowComponent
+          }
+
           Text {
             width: parent.width
             visible: root.visibleChats.length > 0
             text: root.view === "forward"
               ? "↑/↓ choose · Enter or click to forward · Esc back"
-              : "↑/↓ choose · Enter open · / search · C hide · S settings · Esc close"
+              : "↑/↓ choose · Enter open/expand · / search · C hide · S settings · Esc close"
             textFormat: Text.PlainText
             color: root.secondaryForeground
             font.family: root.fontFamily
