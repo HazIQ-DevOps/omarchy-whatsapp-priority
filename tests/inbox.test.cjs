@@ -5,8 +5,8 @@ const { runInNewContext } = require('node:vm')
 const { test } = require('node:test')
 
 const source = readFileSync(join(__dirname, '..', 'Model.js'), 'utf8')
-const { inboxRows } = runInNewContext(
-  source.replace(/^\.pragma library\s*/, '') + '\n;({ inboxRows })', {}
+const { inboxRows, hoverSections } = runInNewContext(
+  source.replace(/^\.pragma library\s*/, '') + '\n;({ inboxRows, hoverSections })', {}
 )
 
 const chats = [
@@ -42,4 +42,20 @@ test('hidden previews stay hidden until searching', () => {
   assert.equal(rows[0].isGroupHeader, true)
   const matches = inboxRows(chats, 'chats', 'Alice', false, 40, dismissed)
   assert.equal(matches[0].jid, 'person@s.whatsapp.net')
+})
+
+test('hover preview separates personal chats and groups and excludes archived chats', () => {
+  const sections = hoverSections(chats, 5, () => false)
+  assert.deepEqual(Array.from(sections.individuals, chat => chat.jid), ['person@s.whatsapp.net'])
+  assert.deepEqual(Array.from(sections.groups, chat => chat.jid), ['group@g.us', 'other@g.us'])
+})
+
+test('busy muted groups do not displace individual hover cards', () => {
+  const groupOnlyUnread = [
+    { jid: 'busy@g.us', isGroup: true, muted: true, unread: 8 },
+    { jid: 'friend@s.whatsapp.net', isGroup: false, unread: 0 },
+  ]
+  const sections = hoverSections(groupOnlyUnread, 5, () => false)
+  assert.equal(sections.individuals[0].jid, 'friend@s.whatsapp.net')
+  assert.equal(sections.groups[0].jid, 'busy@g.us')
 })

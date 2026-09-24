@@ -105,6 +105,16 @@ function inboxRows(chats, view, query, groupsExpanded, chatLimit, isDismissed) {
   return rows
 }
 
+function hoverSections(chats, individualLimit, isDismissed) {
+  var visible = chats.filter(function(chat) { return !chat.archived && !isDismissed(chat) })
+  var individuals = visible.filter(function(chat) { return !chat.isGroup })
+  var unreadIndividuals = individuals.filter(function(chat) { return (Number(chat.unread) || 0) > 0 })
+  return {
+    individuals: (unreadIndividuals.length > 0 ? unreadIndividuals : individuals).slice(0, individualLimit),
+    groups: visible.filter(function(chat) { return chat.isGroup })
+  }
+}
+
 // Expand whole typed shortcuts only, so "LOL" in a longer word or a URL is
 // left alone. The same conversion applies to captions and ordinary replies.
 function expandEmoticons(text) {

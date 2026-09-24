@@ -29,9 +29,10 @@ BarWidget {
   readonly property bool hideWhenEmpty: root.setting("hideWhenEmpty", false) === true
   readonly property string priorityName: String(root.setting("priorityName", "") || "")
   readonly property bool priorityAlert: Model.hasPriorityUnread(
-    (client.attentionChats || []).filter(function(chat) { return !root.isChatDismissed(chat) }),
+    (client.attentionChats || []).filter(function(chat) { return !chat.archived && !root.isChatDismissed(chat) }),
     priorityName)
   property var dismissedChats: ({})
+  property bool hoverGroupsExpanded: false
   readonly property var hoverChats: {
     var chats = (client.attentionChats || []).slice()
     var recent = client.chats || []
@@ -39,10 +40,13 @@ BarWidget {
       if (!recent[i] || chats.some(function(chat) { return chat.jid === recent[i].jid })) continue
       chats.push(recent[i])
     }
-    var visible = chats.filter(function(chat) { return !root.isChatDismissed(chat) })
-    var unreadChats = visible.filter(function(chat) { return (Number(chat.unread) || 0) > 0 })
-    return (unreadChats.length > 0 ? unreadChats : visible).slice(0, 5)
+    return chats
   }
+  readonly property var hoverSections: Model.hoverSections(root.hoverChats, 5, function(chat) {
+    return root.isChatDismissed(chat)
+  })
+  readonly property var hoverIndividuals: root.hoverSections.individuals
+  readonly property var hoverGroups: root.hoverSections.groups
 
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
@@ -238,7 +242,7 @@ BarWidget {
         }
 
         Text {
-          visible: root.hoverChats.length === 0
+          visible: root.hoverIndividuals.length === 0 && root.hoverGroups.length === 0
           width: parent.width
           text: root.linked ? "No recent conversations" : "Click to link WhatsApp"
           textFormat: Text.PlainText
@@ -251,9 +255,9 @@ BarWidget {
           }
         }
 
-        Repeater {
-          model: root.hoverChats
-          delegate: Rectangle {
+        Component {
+          id: hoverChatTile
+          Rectangle {
             id: chatTile
             required property var modelData
             width: hoverContent.width
@@ -317,6 +321,89 @@ BarWidget {
               onClicked: root.focusChat(chatTile.modelData.jid)
             }
           }
+        }
+
+        Text {
+          visible: root.hoverIndividuals.length > 0 || root.hoverGroups.length > 0
+          width: parent.width
+          text: "Individuals"
+          textFormat: Text.PlainText
+          color: root.bar ? root.bar.foreground : Color.foreground
+          opacity: 0.65
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+
+        Text {
+          visible: root.hoverIndividuals.length === 0 && root.hoverGroups.length > 0
+          width: parent.width
+          text: "No individual conversations"
+          textFormat: Text.PlainText
+          color: root.bar ? root.bar.foreground : Color.foreground
+          opacity: 0.65
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.caption
+        }
+
+        ListView {
+          width: parent.width
+          visible: root.hoverIndividuals.length > 0
+          height: Math.min(contentHeight, Style.space(220))
+          model: root.hoverIndividuals
+          delegate: hoverChatTile
+          spacing: Style.space(4)
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+          interactive: contentHeight > height
+        }
+
+        Rectangle {
+          id: hoverGroupToggle
+          visible: root.hoverGroups.length > 0
+          width: parent.width
+          height: Style.space(32)
+          radius: Style.cornerRadius
+          color: groupMouse.containsMouse
+            ? Style.hoverFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent)
+            : Style.normalFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent)
+          border.width: 1
+          border.color: {
+            var ink = root.bar ? root.bar.foreground : Color.foreground
+            return Qt.rgba(ink.r, ink.g, ink.b, 0.2)
+          }
+
+          Text {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.margins: Style.space(9)
+            text: (root.hoverGroupsExpanded ? "▾" : "▸") + "  Groups (" + root.hoverGroups.length + ")"
+            textFormat: Text.PlainText
+            color: root.bar ? root.bar.foreground : Color.foreground
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.bold: true
+          }
+
+          MouseArea {
+            id: groupMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.hoverGroupsExpanded = !root.hoverGroupsExpanded
+          }
+        }
+
+        ListView {
+          width: parent.width
+          visible: root.hoverGroupsExpanded && root.hoverGroups.length > 0
+          height: Math.min(contentHeight, Style.space(110))
+          model: root.hoverGroups
+          delegate: hoverChatTile
+          spacing: Style.space(4)
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+          interactive: contentHeight > height
         }
 
         Text {

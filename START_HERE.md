@@ -20,7 +20,7 @@ This build uses the same plugin ID, `io.github.ricky.whatsapp`, as the upstream 
 
 ## Use
 
-Hover over the bar icon for an unread summary grouped by conversation. Click the summary or the bar icon to open the plugin's chat panel and reply. The main list shows individual chats first, with groups in a collapsed **Groups** section; click it or select it and press `Enter` to expand. Archived chats are excluded from the main list and search. Search still finds matching groups even while the section is collapsed. Use `j`/`k` or arrow keys to select a chat, `Enter` to open it, and `Escape` to go back. Opening a chat marks it read on WhatsApp. Right-click the bar icon for the full WhatsApp Web client.
+Hover over the bar icon for a preview with individuals first and groups in a collapsed **Groups** section. Click the Groups row to expand it, or click a contact to open that chat. The click-open panel has the same split; select Groups with the arrow keys and press `Enter` to expand. Archived chats are excluded from both views and from the main panel's search. Search still finds matching groups even while the section is collapsed. Use `j`/`k` or arrow keys to select a chat, `Enter` to open it, and `Escape` to go back. Opening a chat marks it read on WhatsApp. Right-click the bar icon for the full WhatsApp Web client.
 
 Press `S` in the chat list, or click the gear, to open Settings. Enter **one** priority sender name and save it. The bar indicator turns red while that sender has unread messages; ordinary unread messages keep it green. The same rule checks the most recent sender in a group chat. The name must match the sender's displayed name, ignoring case and extra spaces.
 
