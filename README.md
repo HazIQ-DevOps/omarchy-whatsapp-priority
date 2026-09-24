@@ -108,6 +108,13 @@ systemctl --user edit omarchy-whatsapp     # Environment=OMARCHY_WHATSAPP_PAIRIN
 Opening a chat marks it read on every device. Messages arriving while a
 conversation is open are marked read immediately.
 
+A single check on an outgoing message means WhatsApp's server accepted it; it
+does not prove the recipient decrypted it. If a recipient sees “Waiting for this
+message,” send urgent messages from your primary phone while checking the
+linked-device session. WhatsApp's [help page](https://faq.whatsapp.com/3398056720476987/)
+recommends getting both phones online, updating WhatsApp, resending, and
+relinking the device if the problem persists.
+
 Desktop alerts and the bar's unread total follow WhatsApp's chat preferences:
 muted chats (including **Always**) and chats that remain archived do not alert
 or add to the total. Timed mutes expire automatically and refresh the badge.

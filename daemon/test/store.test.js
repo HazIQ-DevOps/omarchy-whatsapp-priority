@@ -64,3 +64,10 @@ test('alias merge prefers Always mute over a shorter primary timed mute', () => 
   assert.equal(canonical.muteEndTime, -1)
   assert.equal(canonical.muted, true)
 })
+
+test('a mapped linked-device ID resolves to its phone JID for outgoing messages', () => {
+  const store = new Store()
+  store.alias('123456789@lid', '27123456789@s.whatsapp.net')
+  assert.equal(store.canonicalJid('123456789@lid'), '27123456789@s.whatsapp.net')
+  assert.equal(store.canonicalJid('27123456789@s.whatsapp.net'), '27123456789@s.whatsapp.net')
+})

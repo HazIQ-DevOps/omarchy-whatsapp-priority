@@ -21,6 +21,7 @@ import { Bus } from './lib/server.js'
 import { extractImage, isGroupJid, isIgnorableChat, isPhotoPlaceholder, isSilent, messageText, messageType, prettyJid } from './lib/message.js'
 import { existingMediaPath, mediaPathFor, MediaCache } from './lib/media.js'
 import { validateOutgoingImage } from './lib/outgoing-image.js'
+import { installSignalConsoleRedaction } from './lib/signal-console.js'
 import {
   applyChatNotificationPreferences,
   isChatMuted,
@@ -28,6 +29,8 @@ import {
   shouldNotifyChat
 } from './lib/preferences.js'
 import { watchPluginState as observePluginState } from './lib/plugin-state.js'
+
+installSignalConsoleRedaction()
 
 const RECONNECT_BASE_MS = 2000
 const RECONNECT_MAX_MS = 60000
@@ -1203,7 +1206,7 @@ async function handleCommand(payload, reply) {
         if (quoted?.key) options.quoted = { key: quoted.key, message: { conversation: quoted.text } }
       }
 
-      const sent = await sock.sendMessage(rawJid, { text }, options)
+      const sent = await sock.sendMessage(canonical, { text }, options)
       recordSentMessage(rawJid, sent)
       reply({ t: 'ack', id, ok: true, jid: rawJid })
       return
@@ -1213,9 +1216,10 @@ async function handleCommand(payload, reply) {
       const rawJid = payload.jid
       if (!rawJid) throw new Error('sendImage: jid required')
       if (!sock || connection !== 'open') throw new Error('sendImage: not connected to WhatsApp')
+      const canonical = store.canonicalJid(rawJid) || rawJid
       const image = validateOutgoingImage(payload.path, payload.mime)
       const caption = String(payload.caption || '').slice(0, 4096)
-      const sent = await sock.sendMessage(rawJid, {
+      const sent = await sock.sendMessage(canonical, {
         image: { url: image.path },
         mimetype: image.mimetype,
         caption

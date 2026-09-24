@@ -10,6 +10,7 @@ This installation is based on [srineshr1/omarchy-whatsapp](https://github.com/sr
 - The composer can paste a clipboard image, preview it, add a caption, and send it through the linked device after explicit confirmation. PNG, JPEG, and WebP images up to 12 MB are supported. Text paste continues to work normally.
 - Search chats by name, group sender, or number from the top of the chat list (`/` focuses search). The hover card's search button opens it directly.
 - Use the emoji picker (`Ctrl+E`, arrows, `Enter`) or typed shortcuts such as `:)`, `:D`, `LOL`, and `<3` in replies and captions.
+- Outgoing messages use the phone JID when an internal linked-device ID has a known phone mapping. libsignal session dumps are redacted before reaching the local journal.
 - The dependency lockfile updates transitive `sharp` to 0.35.4, the patched version for [GHSA-rgj7-g3m4-5g8c](https://github.com/advisories/GHSA-rgj7-g3m4-5g8c), while keeping `baileys` at 6.7.24.
 
 The linked-device bridge, chat storage, and reply behavior remain from the upstream project.
