@@ -96,7 +96,7 @@ systemctl --user edit omarchy-whatsapp     # Environment=OMARCHY_WHATSAPP_PAIRIN
 | Reply | Type, then `Enter` |
 | Back to the chat list | `Escape` |
 | Close the panel | `Escape` from the list |
-| Full WhatsApp Web | Right-click the icon, or the ⧉ button in the panel |
+| Full WhatsApp Web | Click the hover summary, right-click the icon, or use the ⧉ button in the panel |
 | Log out | Power button on the chat list |
 | Open a chat from a notification | Click the notification |
 

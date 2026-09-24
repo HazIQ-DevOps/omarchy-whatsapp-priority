@@ -258,12 +258,22 @@ BarWidget {
 
       Text {
         width: parent.width
-        text: "Click for chats, replies and settings"
+        text: "Click to open full WhatsApp"
         textFormat: Text.PlainText
         color: root.bar ? root.bar.foreground : Color.foreground
         opacity: 0.6
         font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.caption
+      }
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      acceptedButtons: Qt.LeftButton
+      cursorShape: Qt.PointingHandCursor
+      onClicked: {
+        hoverPreview.open = false
+        root.openWebClient()
       }
     }
   }
