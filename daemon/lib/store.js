@@ -80,6 +80,9 @@ export class Store {
         for (const message of list) {
           if (message.imagePath && !existsSync(message.imagePath)) message.imagePath = ''
           if (message.videoPath && !existsSync(message.videoPath)) message.videoPath = ''
+          if (message.audioPath && !existsSync(message.audioPath)) message.audioPath = ''
+          if (message.cachePath && !existsSync(message.cachePath)) message.cachePath = ''
+          if (message.documentPath && !existsSync(message.documentPath)) message.documentPath = ''
         }
       }
       for (const [from, to] of this.aliases.entries()) {

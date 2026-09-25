@@ -1,5 +1,8 @@
-import { createWriteStream, existsSync, renameSync, unlinkSync } from 'node:fs'
-import { join } from 'node:path'
+import { constants, createWriteStream, existsSync, renameSync, unlinkSync } from 'node:fs'
+import { copyFile, mkdir } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { execFileSync } from 'node:child_process'
+import { isAbsolute, join, basename, extname } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { Transform } from 'node:stream'
 import { downloadContentFromMessage } from 'baileys'
@@ -8,6 +11,8 @@ import { logger } from './logger.js'
 
 export const MAX_IMAGE_BYTES = 12 * 1024 * 1024
 export const MAX_VIDEO_BYTES = 100 * 1024 * 1024
+export const MAX_AUDIO_BYTES = 50 * 1024 * 1024
+export const MAX_DOCUMENT_BYTES = 200 * 1024 * 1024
 const MAX_PARALLEL = 2
 
 const EXT = {
@@ -19,7 +24,21 @@ const EXT = {
   'video/mp4': 'mp4',
   'video/webm': 'webm',
   'video/3gpp': '3gp',
-  'video/quicktime': 'mov'
+  'video/quicktime': 'mov',
+  'audio/ogg': 'ogg',
+  'audio/opus': 'opus',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/aac': 'aac',
+  'audio/wav': 'wav',
+  'audio/webm': 'webm',
+  'application/pdf': 'pdf',
+  'text/plain': 'txt',
+  'application/zip': 'zip',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx'
 }
 
 function safeId(id) {
@@ -28,11 +47,51 @@ function safeId(id) {
 
 function extFor(mimetype) {
   const type = String(mimetype || '').split(';')[0].trim().toLowerCase()
-  return EXT[type] || (type.startsWith('video/') ? 'mp4' : 'jpg')
+  return EXT[type] || (type.startsWith('video/') ? 'mp4'
+    : type.startsWith('audio/') ? 'audio' : type.startsWith('image/') ? 'jpg' : 'bin')
 }
 
 export function mediaByteLimit(media) {
-  return media?.kind === 'video' ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES
+  return media?.kind === 'video' ? MAX_VIDEO_BYTES
+    : media?.kind === 'audio' ? MAX_AUDIO_BYTES
+      : media?.kind === 'document' ? MAX_DOCUMENT_BYTES : MAX_IMAGE_BYTES
+}
+
+export function defaultDownloadDir() {
+  try {
+    const value = execFileSync('xdg-user-dir', ['DOWNLOAD'], { encoding: 'utf8', timeout: 2000 }).trim()
+    if (isAbsolute(value)) return value
+  } catch { /* use the conventional directory */ }
+  return join(homedir(), 'Downloads')
+}
+
+export function safeDocumentName(fileName, id, mimetype) {
+  const raw = basename(String(fileName || '').replace(/\\/g, '/'))
+    .replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '')
+    .replace(/^\.+/, '').trim().slice(0, 140)
+  const fallback = `document-${safeId(id)}.${extFor(mimetype)}`
+  if (!raw) return fallback
+  return extname(raw) ? raw : `${raw}.${extFor(mimetype)}`
+}
+
+export async function saveDocumentToDownloads(message, directory = defaultDownloadDir()) {
+  if (!message?.cachePath) throw new Error('Document has not been downloaded')
+  if (message.documentPath && existsSync(message.documentPath)) return message.documentPath
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const name = safeDocumentName(message.media?.fileName, message.id, message.media?.mimetype)
+  const suffix = extname(name)
+  const stem = name.slice(0, name.length - suffix.length)
+  for (let i = 0; i < 1000; i++) {
+    const target = join(directory, i ? `${stem} (${i})${suffix}` : name)
+    try {
+      await copyFile(message.cachePath, target, constants.COPYFILE_EXCL)
+      message.documentPath = target
+      return target
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err
+    }
+  }
+  throw new Error('Could not find a free filename in Downloads')
 }
 
 export function mediaPathFor(id, mimetype) {
@@ -41,8 +100,12 @@ export function mediaPathFor(id, mimetype) {
 
 export function existingMediaPath(message) {
   if (!message?.id || !message.media) return ''
-  const current = message.media.kind === 'video' ? message.videoPath : message.imagePath
+  const current = message.media.kind === 'video' ? message.videoPath
+    : message.media.kind === 'audio' ? message.audioPath
+      : message.media.kind === 'document' ? message.cachePath : message.imagePath
   if (current && existsSync(current)) return current
+  if (message.media.kind === 'document' && message.documentPath && existsSync(message.documentPath))
+    return message.documentPath
   const guessed = mediaPathFor(message.id, message.media.mimetype)
   return existsSync(guessed) ? guessed : ''
 }
@@ -69,9 +132,12 @@ function toWaMessage(message) {
   }
   return {
     key: message.key,
+    // Baileys' media retry helper accepts videoMessage for both ordinary clips
+    // and PTV notes; it needs the key and mediaKey to request a fresh URL.
     message: media.kind === 'sticker' ? { stickerMessage: body }
-      : media.kind === 'video' ? { [media.messageType === 'ptvMessage' ? 'ptvMessage' : 'videoMessage']: body }
-        : { imageMessage: body }
+      : media.kind === 'video' ? { videoMessage: body }
+        : media.kind === 'audio' ? { audioMessage: body }
+          : media.kind === 'document' ? { documentMessage: body } : { imageMessage: body }
   }
 }
 
@@ -87,18 +153,20 @@ export class MediaCache {
 
   enqueue(jid, message, { requested = false } = {}) {
     if (!message?.id || !message.media) return false
-    if (message.media.kind === 'video' && !requested) return false
+    if (['video', 'audio', 'document'].includes(message.media.kind) && !requested) return false
     const limit = mediaByteLimit(message.media)
     if (message.media.fileLength && message.media.fileLength > limit) {
-      if (requested) throw new Error(`Video exceeds the ${MAX_VIDEO_BYTES / 1024 / 1024} MB playback limit`)
+      if (requested) throw new Error(`${message.media.kind} exceeds the ${limit / 1024 / 1024} MB download limit`)
       return false
     }
     const already = existingMediaPath(message)
     if (already) {
-      const field = message.media.kind === 'video' ? 'videoPath' : 'imagePath'
+      const field = message.media.kind === 'video' ? 'videoPath'
+        : message.media.kind === 'audio' ? 'audioPath'
+          : message.media.kind === 'document' ? 'cachePath' : 'imagePath'
       if (message[field] !== already || requested) {
         message[field] = already
-        this.onReady?.(jid, message)
+        Promise.resolve(this.onReady?.(jid, message)).catch((err) => this.onError?.(jid, message, err))
       }
       return true
     }
@@ -123,7 +191,8 @@ export class MediaCache {
 
   async pull(message) {
     const media = message.media
-    const kind = media.kind === 'sticker' ? 'sticker' : media.kind === 'video' ? 'video' : 'image'
+    const kind = media.kind === 'sticker' ? 'sticker'
+      : ['video', 'audio', 'document'].includes(media.kind) ? media.kind : 'image'
     const opts = { options: { timeout: 20000 } }
     const first = {
       mediaKey: toBuffer(media.mediaKey),
@@ -139,6 +208,7 @@ export class MediaCache {
       const refreshed = await sock.updateMediaMessage(toWaMessage(message))
       const node = refreshed?.message?.imageMessage || refreshed?.message?.stickerMessage
         || refreshed?.message?.videoMessage || refreshed?.message?.ptvMessage
+        || refreshed?.message?.audioMessage || refreshed?.message?.documentMessage
       if (node?.directPath) {
         media.directPath = node.directPath
         media.url = node.url || ''
@@ -167,8 +237,10 @@ export class MediaCache {
       })
       await pipeline(stream, guard, createWriteStream(tmp, { mode: 0o600 }))
       renameSync(tmp, target)
-      message[media.kind === 'video' ? 'videoPath' : 'imagePath'] = target
-      this.onReady?.(jid, message)
+      message[media.kind === 'video' ? 'videoPath'
+        : media.kind === 'audio' ? 'audioPath'
+          : media.kind === 'document' ? 'cachePath' : 'imagePath'] = target
+      await this.onReady?.(jid, message)
     } catch (err) {
       try { unlinkSync(tmp) } catch { /* leftover */ }
       logger.warn({ err: String(err?.message || err), id: message.id }, 'media: download failed')

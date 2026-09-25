@@ -34,7 +34,9 @@ Panel {
   property string peekImagePath: ""
   property string peekVideoPath: ""
   property string videoError: ""
-  property string pendingVideoMessageId: ""
+  property string pendingMediaMessageId: ""
+  property string activeAudioMessageId: ""
+  property string audioPath: ""
   readonly property bool peekActive: peekImagePath.length > 0 || peekVideoPath.length > 0
   property string pendingImagePath: ""
   property string pendingImageMime: ""
@@ -176,7 +178,8 @@ Panel {
     root.activeJid = jid
     root.activeChat = null
     root.messages = []
-    root.pendingVideoMessageId = ""
+    root.pendingMediaMessageId = ""
+    root.stopAudio()
     root.selectedMessageId = ""
     root.quotedMessageId = ""
     root.editingMessageId = ""
@@ -208,7 +211,8 @@ Panel {
     root.activeJid = ""
     root.activeChat = null
     root.messages = []
-    root.pendingVideoMessageId = ""
+    root.pendingMediaMessageId = ""
+    root.stopAudio()
     composer.text = ""
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
@@ -228,13 +232,62 @@ Panel {
       root.peekVideoPath = message.videoPath
       return
     }
-    if (root.pendingVideoMessageId === message.id) return
-    root.pendingVideoMessageId = message.id
+    if (root.pendingMediaMessageId === message.id) return
+    root.pendingMediaMessageId = message.id
     root.statusLine = "Downloading video…"
     if (!root.client.downloadMedia(root.activeJid, message.id)) {
-      root.pendingVideoMessageId = ""
+      root.pendingMediaMessageId = ""
       root.statusLine = "WhatsApp is not connected"
     }
+  }
+
+  function stopAudio() {
+    voicePlayer.stop()
+    root.activeAudioMessageId = ""
+    root.audioPath = ""
+  }
+
+  function toggleAudio(message) {
+    if (!message || !root.client || !root.activeJid) return
+    if (message.audioPath) {
+      if (root.activeAudioMessageId === message.id) {
+        if (voicePlayer.playbackState === MediaPlayer.PlayingState) voicePlayer.pause()
+        else voicePlayer.play()
+      } else {
+        voicePlayer.stop()
+        root.activeAudioMessageId = message.id
+        root.audioPath = message.audioPath
+      }
+      return
+    }
+    if (root.pendingMediaMessageId === message.id) return
+    root.pendingMediaMessageId = message.id
+    root.statusLine = "Downloading audio…"
+    if (!root.client.downloadMedia(root.activeJid, message.id)) {
+      root.pendingMediaMessageId = ""
+      root.statusLine = "WhatsApp is not connected"
+    }
+  }
+
+  function downloadDocument(message) {
+    if (!message || !root.client || !root.activeJid) return
+    if (message.documentPath) {
+      root.statusLine = "Saved to " + message.documentPath
+      return
+    }
+    if (root.pendingMediaMessageId === message.id) return
+    root.pendingMediaMessageId = message.id
+    root.statusLine = "Downloading document…"
+    if (!root.client.downloadMedia(root.activeJid, message.id)) {
+      root.pendingMediaMessageId = ""
+      root.statusLine = "WhatsApp is not connected"
+    }
+  }
+
+  function playbackTime(milliseconds) {
+    var seconds = Math.floor(Math.max(0, milliseconds || 0) / 1000)
+    var remainder = seconds % 60
+    return Math.floor(seconds / 60) + ":" + (remainder < 10 ? "0" : "") + remainder
   }
 
   function openSettings() {
@@ -549,7 +602,10 @@ Panel {
   }
 
   onOpenedChanged: {
-    if (!root.opened) return
+    if (!root.opened) {
+      if (root.activeAudioMessageId) root.stopAudio()
+      return
+    }
     root.statusLine = ""
     if (root.client) {
       root.client.refresh()
@@ -594,23 +650,38 @@ Panel {
       root.patchMessage(messageId, { status: status })
     }
 
-    function onMessageMedia(jid, messageId, mediaPath, mediaKind) {
-      if (jid !== root.activeJid || !mediaPath) return
+    function onMessageMedia(jid, messageId, mediaPath, mediaKind, details) {
+      if (!mediaPath || !root.messages.some(function(message) { return message.id === messageId })) return
       if (mediaKind === "video") {
         root.patchMessage(messageId, { videoPath: mediaPath })
-        if (root.pendingVideoMessageId === messageId) {
-          root.pendingVideoMessageId = ""
+        if (root.pendingMediaMessageId === messageId) {
+          root.pendingMediaMessageId = ""
           root.statusLine = ""
           root.videoError = ""
           root.peekVideoPath = mediaPath
+        }
+      } else if (mediaKind === "audio") {
+        root.patchMessage(messageId, Object.assign({ audioPath: mediaPath }, details || {}))
+        if (root.pendingMediaMessageId === messageId) {
+          root.pendingMediaMessageId = ""
+          root.statusLine = ""
+          root.stopAudio()
+          root.activeAudioMessageId = messageId
+          root.audioPath = mediaPath
+        }
+      } else if (mediaKind === "document") {
+        root.patchMessage(messageId, Object.assign({ documentPath: mediaPath }, details || {}))
+        if (root.pendingMediaMessageId === messageId) {
+          root.pendingMediaMessageId = ""
+          root.statusLine = "Saved to " + mediaPath
         }
       } else root.patchMessage(messageId, { imagePath: mediaPath })
     }
 
     function onMessageMediaError(jid, messageId, message) {
-      if (jid !== root.activeJid || root.pendingVideoMessageId !== messageId) return
-      root.pendingVideoMessageId = ""
-      root.statusLine = message || "Could not download video"
+      if (root.pendingMediaMessageId !== messageId) return
+      root.pendingMediaMessageId = ""
+      root.statusLine = message || "Could not download media"
     }
 
     function onMessagePatched(jid, messageId, fields) {
@@ -640,8 +711,8 @@ Panel {
     function onCommandFailed(command, message) {
       if (command === "send") root.statusLine = message
       if (command === "downloadMedia") {
-        root.pendingVideoMessageId = ""
-        root.statusLine = message || "Could not download video"
+        root.pendingMediaMessageId = ""
+        root.statusLine = message || "Could not download media"
       }
       if (command === "sendImage") {
         root.imageSending = false
@@ -662,6 +733,18 @@ Panel {
         }
         root.statusLine = message || "Refresh failed"
       }
+    }
+  }
+
+  MediaPlayer {
+    id: voicePlayer
+    source: root.audioPath.length > 0 ? Qt.resolvedUrl("file://" + root.audioPath) : ""
+    audioOutput: AudioOutput {}
+    onSourceChanged: {
+      if (root.audioPath.length > 0) play()
+    }
+    onErrorOccurred: function (error, errorString) {
+      root.statusLine = errorString || "Could not play audio"
     }
   }
 
@@ -755,6 +838,15 @@ Panel {
             var selectedVideo = root.messages.find(function(message) { return message.id === root.selectedMessageId })
             if (selectedVideo && (selectedVideo.type === "videoMessage" || selectedVideo.type === "ptvMessage"))
               root.viewVideo(selectedVideo)
+          }
+          else if (text === "p" || text === "P") {
+            var selectedAudio = root.messages.find(function(message) { return message.id === root.selectedMessageId })
+            if (selectedAudio && selectedAudio.type === "audioMessage") root.toggleAudio(selectedAudio)
+          }
+          else if (text === "s" || text === "S") {
+            var selectedDocument = root.messages.find(function(message) { return message.id === root.selectedMessageId })
+            if (selectedDocument && (selectedDocument.type === "documentMessage"
+              || selectedDocument.type === "documentWithCaptionMessage")) root.downloadDocument(selectedDocument)
           }
           else if (text === "f" || text === "F") root.startForward()
           else if (text === "e" || text === "E") root.startEdit()
@@ -1304,6 +1396,11 @@ Panel {
                   && String(messageRow.modelData.imagePath).length > 0
                 readonly property bool hasVideo: !messageRow.modelData.deleted
                   && (messageRow.modelData.type === "videoMessage" || messageRow.modelData.type === "ptvMessage")
+                readonly property bool hasAudio: !messageRow.modelData.deleted
+                  && messageRow.modelData.type === "audioMessage"
+                readonly property bool hasDocument: !messageRow.modelData.deleted
+                  && (messageRow.modelData.type === "documentMessage"
+                    || messageRow.modelData.type === "documentWithCaptionMessage")
                 readonly property bool showBody: {
                   var text = messageRow.modelData.text || ""
                   if (!text.length) return false
@@ -1341,6 +1438,8 @@ Panel {
                       forwardedLabel.visible ? forwardedLabel.width : 0,
                       bubbleRow.hasImage ? photo.width : 0,
                       bubbleRow.hasVideo ? videoTile.width : 0,
+                      bubbleRow.hasAudio ? audioTile.width : 0,
+                      bubbleRow.hasDocument ? documentTile.width : 0,
                       bodyLabel.visible ? bodyLabel.width : 0,
                       reactionsLabel.visible ? reactionsLabel.width : 0,
                       Math.min(metaLabel.implicitWidth, bubbleRow.maxInner))
@@ -1429,7 +1528,7 @@ Panel {
 
                       Text {
                         anchors.centerIn: parent
-                        text: root.pendingVideoMessageId === messageRow.modelData.id
+                        text: root.pendingMediaMessageId === messageRow.modelData.id
                           ? "Downloading video…" : "▶  Play video"
                         color: root.foreground
                         font.family: root.fontFamily
@@ -1440,6 +1539,104 @@ Panel {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
                         onClicked: root.viewVideo(messageRow.modelData)
+                      }
+                    }
+
+                    Rectangle {
+                      id: audioTile
+                      visible: bubbleRow.hasAudio
+                      width: Math.min(bubbleRow.maxInner, Style.space(220))
+                      height: Style.space(66)
+                      radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(4)
+                      color: Style.normalFillFor(root.foreground, Color.accent)
+                      border.width: 1
+                      border.color: root.secondaryForeground
+
+                      Column {
+                        anchors.fill: parent
+                        anchors.margins: Style.space(6)
+                        spacing: Style.space(1)
+                        Row {
+                          width: parent.width
+                          spacing: Style.space(6)
+                          Text {
+                            id: audioPlayLabel
+                            width: parent.width - audioDurationLabel.width - Style.space(6)
+                            text: root.pendingMediaMessageId === messageRow.modelData.id
+                              ? "Downloading audio…"
+                              : root.activeAudioMessageId === messageRow.modelData.id
+                                && voicePlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ  Pause"
+                                  : messageRow.modelData.isVoiceNote ? "▶  Voice note" : "▶  Play audio"
+                            color: root.foreground
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.body
+                            elide: Text.ElideRight
+                            MouseArea {
+                              anchors.fill: parent
+                              cursorShape: Qt.PointingHandCursor
+                              onClicked: root.toggleAudio(messageRow.modelData)
+                            }
+                          }
+                          Text {
+                            id: audioDurationLabel
+                            text: root.activeAudioMessageId === messageRow.modelData.id
+                              && voicePlayer.duration > 0 ? root.playbackTime(voicePlayer.duration)
+                                : root.playbackTime((messageRow.modelData.audioSeconds || 0) * 1000)
+                            color: root.secondaryForeground
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                          }
+                        }
+                        Slider {
+                          width: parent.width
+                          height: Style.space(28)
+                          enabled: root.activeAudioMessageId === messageRow.modelData.id
+                          from: 0
+                          to: Math.max(1, root.activeAudioMessageId === messageRow.modelData.id
+                            ? voicePlayer.duration : (messageRow.modelData.audioSeconds || 0) * 1000)
+                          value: root.activeAudioMessageId === messageRow.modelData.id ? voicePlayer.position : 0
+                          onMoved: if (enabled) voicePlayer.position = value
+                        }
+                      }
+                    }
+
+                    Rectangle {
+                      id: documentTile
+                      visible: bubbleRow.hasDocument
+                      width: Math.min(bubbleRow.maxInner, Style.space(220))
+                      height: Style.space(60)
+                      radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(4)
+                      color: Style.normalFillFor(root.foreground, Color.accent)
+                      border.width: 1
+                      border.color: root.secondaryForeground
+
+                      Column {
+                        anchors.fill: parent
+                        anchors.margins: Style.space(7)
+                        Text {
+                          width: parent.width
+                          text: messageRow.modelData.fileName || "Document"
+                          textFormat: Text.PlainText
+                          color: root.foreground
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.body
+                          elide: Text.ElideRight
+                        }
+                        Text {
+                          width: parent.width
+                          text: messageRow.modelData.documentPath ? "✓ Saved to Downloads"
+                            : root.pendingMediaMessageId === messageRow.modelData.id
+                              ? "Downloading…" : "↓ Download document"
+                          color: root.secondaryForeground
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                        }
+                      }
+
+                      MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.downloadDocument(messageRow.modelData)
                       }
                     }
 

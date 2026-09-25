@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.ricky.whatsapp",
   "name": "WhatsApp",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "author": "ricky",
   "license": "MIT",
-  "description": "WhatsApp for the Omarchy bar: notifications, chat actions, image previews, and received video playback.",
+  "description": "WhatsApp for the Omarchy bar: notifications, chat actions, media playback, and document downloads.",
   "kinds": ["bar-widget"],
   "entryPoints": { "barWidget": "BarWidget.qml" },
   "barWidget": {

@@ -70,31 +70,38 @@ function bytesToB64(value) {
   return ''
 }
 
-// Media payloads we can decrypt after a chat is opened. Videos are fetched only
-// when the user asks to play them, so busy groups do not download them all.
+// Media payloads we can decrypt after a chat is opened. Large media is fetched
+// only when requested, so busy groups do not download it all.
 export function extractPreviewMedia(message) {
   const content = normalizeMessageContent(message)
   if (!content) return null
   const type = getContentType(content)
   if (type !== 'imageMessage' && type !== 'stickerMessage'
-    && type !== 'videoMessage' && type !== 'ptvMessage') return null
+    && type !== 'videoMessage' && type !== 'ptvMessage'
+    && type !== 'audioMessage' && type !== 'documentMessage') return null
   const node = content[type]
   if (!node || typeof node !== 'object') return null
   const mediaKey = bytesToB64(node.mediaKey)
   if (!mediaKey || !(node.directPath || node.url)) return null
   const fileLength = Number(node.fileLength || 0)
+  const kind = type === 'stickerMessage' ? 'sticker'
+    : (type === 'videoMessage' || type === 'ptvMessage') ? 'video'
+      : type === 'audioMessage' ? 'audio' : type === 'documentMessage' ? 'document' : 'image'
   return {
-    kind: type === 'stickerMessage' ? 'sticker'
-      : (type === 'videoMessage' || type === 'ptvMessage') ? 'video' : 'image',
+    kind,
     messageType: type,
     mimetype: node.mimetype || (type === 'stickerMessage' ? 'image/webp'
-      : (type === 'videoMessage' || type === 'ptvMessage') ? 'video/mp4' : 'image/jpeg'),
+      : kind === 'video' ? 'video/mp4' : kind === 'audio' ? 'audio/ogg'
+        : kind === 'document' ? 'application/octet-stream' : 'image/jpeg'),
     mediaKey,
     directPath: node.directPath || '',
     url: node.url || '',
     fileEncSha256: bytesToB64(node.fileEncSha256),
     fileSha256: bytesToB64(node.fileSha256),
     fileLength,
+    fileName: kind === 'document' && typeof node.fileName === 'string' ? node.fileName : '',
+    ptt: kind === 'audio' && node.ptt === true,
+    seconds: kind === 'audio' ? Number(node.seconds || 0) : 0,
     caption: typeof node.caption === 'string' ? node.caption : ''
   }
 }

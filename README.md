@@ -15,6 +15,11 @@ Videos download only when opened and are limited to 100 MB. Playback requires
 the `qt6-multimedia` package and codecs supported by your system.
 Older video entries saved by previous releases ask the linked phone for their
 media details when opened; WhatsApp may no longer be able to return some of them.
+Voice notes and other audio play directly in the chat bubble: click the play
+control or select the message and press **P**. Documents have a download tile;
+click it or select the message and press **S** to save a copy in your Downloads
+folder. Audio and documents download only when opened, with 50 MB and 200 MB
+limits respectively. Existing filenames are never overwritten.
 
 <p align="center">
   <img src="docs/inbox.png" alt="Chat list in the Omarchy bar" width="48%" />
@@ -201,11 +206,12 @@ omarchy bar move io.github.ricky.whatsapp --section right
 
 Nothing leaves your machine except traffic to WhatsApp itself. Incoming images
 and stickers up to 12 MB may be downloaded into the local media cache so they
-can appear inline. Other media, including voice notes, uses placeholders; open
-the full client for those. A copied image remains in a private runtime file
+can appear inline. Videos and audio download on demand into the media cache;
+documents download on demand and are copied to your Downloads folder. A copied
+image remains in a private runtime file
 until you send or remove it.
 
-`omarchy-whatsapp logout` unlinks the device and clears credentials, chats, retry payloads, and media.
+`omarchy-whatsapp logout` unlinks the device and clears credentials, chats, retry payloads, and cached media. Documents explicitly saved to Downloads remain there.
 
 Disabling the bar widget with `omarchy plugin disable io.github.ricky.whatsapp`
 also stops and disables the WhatsApp user service. Linked-device credentials

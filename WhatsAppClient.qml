@@ -57,7 +57,7 @@ Item {
   signal messagesLoaded(string jid, var chat, var messages)
   signal messageArrived(string jid, var message, var chat)
   signal messageStatusChanged(string jid, string messageId, int status)
-  signal messageMedia(string jid, string messageId, string mediaPath, string mediaKind)
+  signal messageMedia(string jid, string messageId, string mediaPath, string mediaKind, var details)
   signal messageMediaError(string jid, string messageId, string message)
   signal messagePatched(string jid, string messageId, var fields)
   signal messageRemoved(string jid, string messageId)
@@ -260,11 +260,11 @@ Item {
         break
 
       case "messageMedia":
-        root.messageMedia(frame.jid || "", frame.id || "", frame.mediaPath || frame.imagePath || "", frame.mediaKind || "image")
+        root.messageMedia(frame.jid || "", frame.id || "", frame.mediaPath || frame.imagePath || "", frame.mediaKind || "image", frame.details || {})
         break
 
       case "messageMediaError":
-        root.messageMediaError(frame.jid || "", frame.id || "", frame.message || "Could not download video")
+        root.messageMediaError(frame.jid || "", frame.id || "", frame.message || "Could not download media")
         break
 
       case "messagePatch":

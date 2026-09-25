@@ -19,7 +19,7 @@ import { Store, normalizeJid } from './lib/store.js'
 import { Notifier } from './lib/notify.js'
 import { Bus } from './lib/server.js'
 import { extractPreviewMedia, isGroupJid, isIgnorableChat, isSilent, messageText, messageType, prettyJid } from './lib/message.js'
-import { existingMediaPath, mediaByteLimit, mediaPathFor, MediaCache } from './lib/media.js'
+import { existingMediaPath, mediaPathFor, safeDocumentName, saveDocumentToDownloads, MediaCache } from './lib/media.js'
 import { validateOutgoingImage } from './lib/outgoing-image.js'
 import { installSignalConsoleRedaction } from './lib/signal-console.js'
 import { contentForStoredMessage, quotedMessageFor, forwardMessageFor } from './lib/message-actions.js'
@@ -69,7 +69,7 @@ const store = new Store()
 const retryCache = new RetryCache(join(stateDir, 'retry'))
 const notifier = new Notifier()
 const media = new MediaCache()
-const pendingVideoResends = new Map()
+const pendingMediaResends = new Map()
 const bus = new Bus(socketPath)
 
 let sock = null
@@ -325,6 +325,10 @@ function flatten(chatJid, message) {
     fromMe: !!message.key?.fromMe,
     text: previewMedia ? (previewMedia.caption || messageText(message.message)) : messageText(message.message),
     type: messageType(message.message),
+    fileName: previewMedia?.kind === 'document'
+      ? safeDocumentName(previewMedia.fileName, id, previewMedia.mimetype) : '',
+    isVoiceNote: previewMedia?.kind === 'audio' && previewMedia.ptt === true,
+    audioSeconds: previewMedia?.kind === 'audio' ? previewMedia.seconds : 0,
     senderName: senderNameFor(chatJid, message),
     senderJid: message.key?.participant ? jidNormalizedUser(message.key.participant) : '',
     status: asStatus(message.status),
@@ -351,6 +355,8 @@ function flatten(chatJid, message) {
     flat.media = payload
     const cached = existingMediaPath({ id, media: payload })
     if (payload.kind === 'video') flat.videoPath = cached
+    else if (payload.kind === 'audio') flat.audioPath = cached
+    else if (payload.kind === 'document') flat.cachePath = cached
     else flat.imagePath = cached
   }
   return flat
@@ -372,6 +378,8 @@ function publishMessagePatch(jid, message) {
     deleted: !!message.deleted,
     imagePath: message.imagePath || '',
     videoPath: message.videoPath || '',
+    audioPath: message.audioPath || '',
+    documentPath: message.documentPath || '',
     reactions: message.reactions || []
   } })
 }
@@ -418,15 +426,15 @@ function ingest(chatJid, raw) {
   const existed = !!store.findMessage(canonicalTarget, message.id)
 
   store.upsertMessage(canonicalTarget, message)
-  const pendingVideo = pendingVideoResends.get(message.id)
-  if (pendingVideo && pendingVideo.jid === canonicalTarget && message.media?.kind === 'video') {
-    clearTimeout(pendingVideo.timer)
-    pendingVideoResends.delete(message.id)
+  const pendingMedia = pendingMediaResends.get(message.id)
+  if (pendingMedia && pendingMedia.jid === canonicalTarget && message.media?.kind === pendingMedia.kind) {
+    clearTimeout(pendingMedia.timer)
+    pendingMediaResends.delete(message.id)
     try {
       media.enqueue(canonicalTarget, store.findMessage(canonicalTarget, message.id), { requested: true })
     } catch (err) {
       bus.broadcast({ t: 'messageMediaError', jid: canonicalTarget, id: message.id,
-        message: String(err?.message || 'Could not download video') })
+        message: String(err?.message || 'Could not download media') })
     }
   }
   const chat = store.touchChat(canonicalTarget, message)
@@ -1046,6 +1054,9 @@ async function connect() {
           original.deleted = true
           original.imagePath = ''
           original.videoPath = ''
+          original.audioPath = ''
+          original.documentPath = ''
+          original.cachePath = ''
           original.media = undefined
           publishMessagePatch(canonical, original)
         } else if (original && u.message) {
@@ -1090,6 +1101,9 @@ async function connect() {
         original.deleted = true
         original.imagePath = ''
         original.videoPath = ''
+        original.audioPath = ''
+        original.documentPath = ''
+        original.cachePath = ''
         original.media = undefined
         publishMessagePatch(key.remoteJid, original)
       }
@@ -1295,29 +1309,31 @@ async function handleCommand(payload, reply) {
       if (!payload.jid || !payload.messageId) throw new Error('downloadMedia: chat and message required')
       const canonical = store.canonicalJid(payload.jid) || payload.jid
       const message = store.findMessage(canonical, String(payload.messageId))
-      if (!message || message.deleted || (message.type !== 'videoMessage' && message.type !== 'ptvMessage'))
-        throw new Error('Video is no longer available')
-      if (!sock || connection !== 'open') throw new Error('WhatsApp is not connected')
-      if (message.media?.kind === 'video') {
-        if (message.media.fileLength && message.media.fileLength > mediaByteLimit(message.media))
-          throw new Error('Video exceeds the 100 MB playback limit')
+      const kind = message?.type === 'videoMessage' || message?.type === 'ptvMessage' ? 'video'
+        : message?.type === 'audioMessage' ? 'audio'
+          : message?.type === 'documentMessage' || message?.type === 'documentWithCaptionMessage' ? 'document' : ''
+      if (!message || message.deleted || !kind) throw new Error('Media is no longer available')
+      if (message.media?.kind === kind) {
+        if (!existingMediaPath(message) && (!sock || connection !== 'open'))
+          throw new Error('WhatsApp is not connected')
         media.enqueue(canonical, message, { requested: true })
       } else {
+        if (!sock || connection !== 'open') throw new Error('WhatsApp is not connected')
         if (typeof sock.requestPlaceholderResend !== 'function' || !message.key?.id)
-          throw new Error('Video can no longer be retrieved from WhatsApp')
-        const old = pendingVideoResends.get(message.id)
+          throw new Error('Media can no longer be retrieved from WhatsApp')
+        const old = pendingMediaResends.get(message.id)
         if (old) clearTimeout(old.timer)
         const timer = setTimeout(() => {
-          pendingVideoResends.delete(message.id)
+          pendingMediaResends.delete(message.id)
           bus.broadcast({ t: 'messageMediaError', jid: canonical, id: message.id,
-            message: 'WhatsApp did not return this older video. Try again later.' })
+            message: 'WhatsApp did not return this older attachment. Try again later.' })
         }, 20000)
         timer.unref?.()
-        pendingVideoResends.set(message.id, { jid: canonical, timer })
+        pendingMediaResends.set(message.id, { jid: canonical, kind, timer })
         try { await sock.requestPlaceholderResend(message.key) }
         catch (err) {
           clearTimeout(timer)
-          pendingVideoResends.delete(message.id)
+          pendingMediaResends.delete(message.id)
           throw err
         }
       }
@@ -1433,6 +1449,10 @@ async function handleCommand(payload, reply) {
         message.text = 'Message deleted'
         message.deleted = true
         message.imagePath = ''
+        message.videoPath = ''
+        message.audioPath = ''
+        message.documentPath = ''
+        message.cachePath = ''
         message.media = undefined
         publishMessagePatch(canonical, message)
       } else {
@@ -1618,16 +1638,24 @@ async function main() {
   for (const chat of store.chats.values()) scheduleMuteExpiry(chat)
 
   media.getSocket = () => sock
-  media.onReady = (jid, message) => {
+  media.onReady = async (jid, message) => {
+    if (message.media?.kind === 'document') await saveDocumentToDownloads(message)
     store.markDirty()
     bus.broadcast({ t: 'messageMedia', jid, id: message.id,
       mediaKind: message.media?.kind || 'image',
-      mediaPath: message.media?.kind === 'video' ? message.videoPath || '' : message.imagePath || '' })
+      mediaPath: message.media?.kind === 'video' ? message.videoPath || ''
+        : message.media?.kind === 'audio' ? message.audioPath || ''
+          : message.media?.kind === 'document' ? message.documentPath || '' : message.imagePath || '',
+      details: message.media?.kind === 'document'
+        ? { fileName: message.fileName || safeDocumentName(message.media.fileName, message.id, message.media.mimetype) }
+        : message.media?.kind === 'audio'
+          ? { isVoiceNote: message.isVoiceNote || message.media.ptt === true,
+            audioSeconds: message.audioSeconds || message.media.seconds || 0 } : {} })
   }
   media.onError = (jid, message, err) => {
-    if (message.media?.kind === 'video') {
+    if (['video', 'audio', 'document'].includes(message.media?.kind)) {
       bus.broadcast({ t: 'messageMediaError', jid, id: message.id,
-        message: String(err?.message || 'Could not download video') })
+        message: String(err?.message || 'Could not download media') })
     }
   }
 
