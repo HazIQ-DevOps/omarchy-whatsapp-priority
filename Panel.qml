@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtMultimedia
 import Quickshell
 import Quickshell.Wayland
 import Quickshell.Io
@@ -31,7 +32,10 @@ Panel {
   property bool logoutConfirmOpen: false
   property bool refreshing: false
   property string peekImagePath: ""
-  readonly property bool peekActive: peekImagePath.length > 0
+  property string peekVideoPath: ""
+  property string videoError: ""
+  property string pendingVideoMessageId: ""
+  readonly property bool peekActive: peekImagePath.length > 0 || peekVideoPath.length > 0
   property string pendingImagePath: ""
   property string pendingImageMime: ""
   property string pendingImageJid: ""
@@ -172,6 +176,7 @@ Panel {
     root.activeJid = jid
     root.activeChat = null
     root.messages = []
+    root.pendingVideoMessageId = ""
     root.selectedMessageId = ""
     root.quotedMessageId = ""
     root.editingMessageId = ""
@@ -203,8 +208,33 @@ Panel {
     root.activeJid = ""
     root.activeChat = null
     root.messages = []
+    root.pendingVideoMessageId = ""
     composer.text = ""
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
+  }
+
+  function closePeek() {
+    peekVideoPlayer.stop()
+    root.peekImagePath = ""
+    root.peekVideoPath = ""
+    root.videoError = ""
+  }
+
+  function viewVideo(message) {
+    if (!message || !root.client || !root.activeJid) return
+    if (message.videoPath) {
+      root.peekImagePath = ""
+      root.videoError = ""
+      root.peekVideoPath = message.videoPath
+      return
+    }
+    if (root.pendingVideoMessageId === message.id) return
+    root.pendingVideoMessageId = message.id
+    root.statusLine = "Downloading video…"
+    if (!root.client.downloadMedia(root.activeJid, message.id)) {
+      root.pendingVideoMessageId = ""
+      root.statusLine = "WhatsApp is not connected"
+    }
   }
 
   function openSettings() {
@@ -564,9 +594,23 @@ Panel {
       root.patchMessage(messageId, { status: status })
     }
 
-    function onMessageMedia(jid, messageId, imagePath) {
-      if (jid !== root.activeJid || !imagePath) return
-      root.patchMessage(messageId, { imagePath: imagePath })
+    function onMessageMedia(jid, messageId, mediaPath, mediaKind) {
+      if (jid !== root.activeJid || !mediaPath) return
+      if (mediaKind === "video") {
+        root.patchMessage(messageId, { videoPath: mediaPath })
+        if (root.pendingVideoMessageId === messageId) {
+          root.pendingVideoMessageId = ""
+          root.statusLine = ""
+          root.videoError = ""
+          root.peekVideoPath = mediaPath
+        }
+      } else root.patchMessage(messageId, { imagePath: mediaPath })
+    }
+
+    function onMessageMediaError(jid, messageId, message) {
+      if (jid !== root.activeJid || root.pendingVideoMessageId !== messageId) return
+      root.pendingVideoMessageId = ""
+      root.statusLine = message || "Could not download video"
     }
 
     function onMessagePatched(jid, messageId, fields) {
@@ -595,6 +639,10 @@ Panel {
 
     function onCommandFailed(command, message) {
       if (command === "send") root.statusLine = message
+      if (command === "downloadMedia") {
+        root.pendingVideoMessageId = ""
+        root.statusLine = message || "Could not download video"
+      }
       if (command === "sendImage") {
         root.imageSending = false
         root.statusLine = message || "Could not send the image"
@@ -687,7 +735,7 @@ Panel {
         || root.logoutConfirmOpen || root.deleteConfirmOpen || root.peekActive
 
       onCloseRequested: {
-        if (root.peekActive) root.peekImagePath = ""
+        if (root.peekActive) root.closePeek()
         else if (root.logoutConfirmOpen) root.cancelLogout()
         else if (root.deleteConfirmOpen) root.deleteConfirmOpen = false
         else if (root.selectedMessageId) root.selectedMessageId = ""
@@ -703,6 +751,11 @@ Panel {
       onTextKey: function (text) {
         if (root.view === "chat" && root.selectedMessageId) {
           if (text === "r" || text === "R") root.startReply()
+          else if (text === "v" || text === "V") {
+            var selectedVideo = root.messages.find(function(message) { return message.id === root.selectedMessageId })
+            if (selectedVideo && (selectedVideo.type === "videoMessage" || selectedVideo.type === "ptvMessage"))
+              root.viewVideo(selectedVideo)
+          }
           else if (text === "f" || text === "F") root.startForward()
           else if (text === "e" || text === "E") root.startEdit()
           else if (text === "d" || text === "D") root.requestDelete(false)
@@ -1249,10 +1302,13 @@ Panel {
                 readonly property real maxInner: Math.max(Style.space(60), bubbleRow.width * 0.82 - bubbleRow.pad * 2)
                 readonly property bool hasImage: !!messageRow.modelData.imagePath
                   && String(messageRow.modelData.imagePath).length > 0
+                readonly property bool hasVideo: !messageRow.modelData.deleted
+                  && (messageRow.modelData.type === "videoMessage" || messageRow.modelData.type === "ptvMessage")
                 readonly property bool showBody: {
                   var text = messageRow.modelData.text || ""
                   if (!text.length) return false
                   if (bubbleRow.hasImage && Model.isPhotoPlaceholder(text)) return false
+                  if (bubbleRow.hasVideo && (text === "Video" || text === "Video note")) return false
                   return true
                 }
                 readonly property bool showSender: !messageRow.modelData.fromMe
@@ -1284,6 +1340,7 @@ Panel {
                       quoteLabel.visible ? quoteLabel.width : 0,
                       forwardedLabel.visible ? forwardedLabel.width : 0,
                       bubbleRow.hasImage ? photo.width : 0,
+                      bubbleRow.hasVideo ? videoTile.width : 0,
                       bodyLabel.visible ? bodyLabel.width : 0,
                       reactionsLabel.visible ? reactionsLabel.width : 0,
                       Math.min(metaLabel.implicitWidth, bubbleRow.maxInner))
@@ -1357,6 +1414,32 @@ Panel {
                             color: "#ffffff"
                           }
                         }
+                      }
+                    }
+
+                    Rectangle {
+                      id: videoTile
+                      visible: bubbleRow.hasVideo
+                      width: Math.min(bubbleRow.maxInner, Style.space(220))
+                      height: Style.space(125)
+                      radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(4)
+                      color: Style.normalFillFor(root.foreground, Color.accent)
+                      border.width: 1
+                      border.color: root.secondaryForeground
+
+                      Text {
+                        anchors.centerIn: parent
+                        text: root.pendingVideoMessageId === messageRow.modelData.id
+                          ? "Downloading video…" : "▶  Play video"
+                        color: root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.body
+                      }
+
+                      MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.viewVideo(messageRow.modelData)
                       }
                     }
 
@@ -1789,7 +1872,7 @@ Panel {
     }
   }
 
-  // ── Desktop Screen-Centered Image Peek Window ───────────────────────
+  // ── Desktop Screen-Centered Media Peek Window ───────────────────────
   PanelWindow {
     id: imagePeekOverlay
     visible: root.peekActive
@@ -1812,7 +1895,7 @@ Panel {
 
       MouseArea {
         anchors.fill: parent
-        onClicked: root.peekImagePath = ""
+        onClicked: root.closePeek()
       }
     }
 
@@ -1822,8 +1905,30 @@ Panel {
       focus: root.peekActive
 
       Keys.onEscapePressed: function (event) {
-        root.peekImagePath = ""
+        root.closePeek()
         event.accepted = true
+      }
+
+      Keys.onSpacePressed: function (event) {
+        if (root.peekVideoPath) {
+          if (peekVideoPlayer.playbackState === MediaPlayer.PlayingState) peekVideoPlayer.pause()
+          else peekVideoPlayer.play()
+          event.accepted = true
+        }
+      }
+
+      Keys.onLeftPressed: function (event) {
+        if (root.peekVideoPath) {
+          peekVideoPlayer.position = Math.max(0, peekVideoPlayer.position - 5000)
+          event.accepted = true
+        }
+      }
+
+      Keys.onRightPressed: function (event) {
+        if (root.peekVideoPath) {
+          peekVideoPlayer.position = Math.min(peekVideoPlayer.duration, peekVideoPlayer.position + 5000)
+          event.accepted = true
+        }
       }
 
       Item {
@@ -1838,12 +1943,77 @@ Panel {
           height: Math.min(parent.height, sourceSize.height > 0 ? sourceSize.height : parent.height)
           fillMode: Image.PreserveAspectFit
           asynchronous: true
-          source: root.peekActive ? Qt.resolvedUrl("file://" + root.peekImagePath) : ""
+          visible: root.peekImagePath.length > 0
+          source: root.peekImagePath.length > 0 ? Qt.resolvedUrl("file://" + root.peekImagePath) : ""
 
           MouseArea {
             anchors.fill: parent
             onClicked: function (event) { event.accepted = true }
           }
+        }
+
+        MediaPlayer {
+          id: peekVideoPlayer
+          source: root.peekVideoPath.length > 0 ? Qt.resolvedUrl("file://" + root.peekVideoPath) : ""
+          videoOutput: peekVideo
+          audioOutput: AudioOutput {}
+          onSourceChanged: {
+            if (root.peekVideoPath.length > 0) play()
+          }
+          onErrorOccurred: function (error, errorString) {
+            root.videoError = errorString || "Could not play video"
+          }
+        }
+
+        VideoOutput {
+          id: peekVideo
+          anchors.fill: parent
+          anchors.bottomMargin: Style.space(44)
+          visible: root.peekVideoPath.length > 0
+          fillMode: VideoOutput.PreserveAspectFit
+          MouseArea {
+            anchors.fill: parent
+            onClicked: {
+              if (peekVideoPlayer.playbackState === MediaPlayer.PlayingState) peekVideoPlayer.pause()
+              else peekVideoPlayer.play()
+            }
+          }
+        }
+
+        Text {
+          visible: root.peekVideoPath.length > 0 && root.videoError.length > 0
+          anchors.centerIn: parent
+          width: parent.width * 0.8
+          text: root.videoError
+          color: "#ffffff"
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          wrapMode: Text.Wrap
+          horizontalAlignment: Text.AlignHCenter
+        }
+
+        Row {
+          visible: root.peekVideoPath.length > 0
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.bottom: parent.bottom
+          spacing: Style.space(8)
+
+          Button {
+            text: peekVideoPlayer.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"
+            onClicked: {
+              if (peekVideoPlayer.playbackState === MediaPlayer.PlayingState) peekVideoPlayer.pause()
+              else peekVideoPlayer.play()
+            }
+          }
+          Slider {
+            width: parent.width - Style.space(130)
+            from: 0
+            to: Math.max(1, peekVideoPlayer.duration)
+            value: peekVideoPlayer.position
+            onMoved: peekVideoPlayer.position = value
+          }
+          Button { text: "Close"; onClicked: root.closePeek() }
         }
       }
     }

@@ -8,6 +8,7 @@ This installation is based on [srineshr1/omarchy-whatsapp](https://github.com/sr
 - `C` on a selected chat hides its preview in the current shell session until a newer message arrives. It does not mark the chat read in WhatsApp. `Enter` opens the chat and follows the upstream plugin's read-receipt behavior.
 - The bridge sends all unread chat metadata separately from the recent-chat limit, so an older priority conversation still changes the indicator.
 - The composer can paste a clipboard image, preview it, add a caption, and send it through the linked device after explicit confirmation. PNG, JPEG, and WebP images up to 12 MB are supported. Text paste continues to work normally.
+- Received videos and video notes play in a full-screen Qt viewer with pause, seek, and keyboard controls. The bridge downloads a video only when opened, caps it at 100 MB, and asks the linked phone to resend media details for older video entries when possible.
 - Search chats by name, group sender, or number from the top of the chat list (`/` focuses search). The hover card's search button opens it directly.
 - Use the emoji picker (`Ctrl+E`, arrows, `Enter`) or typed shortcuts such as `:)`, `:D`, `LOL`, and `<3` in replies and captions.
 - Outgoing messages use the phone JID when an internal linked-device ID has a known phone mapping. libsignal session dumps are redacted before reaching the local journal.

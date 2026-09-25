@@ -18,8 +18,8 @@ import { logger, waLogger } from './lib/logger.js'
 import { Store, normalizeJid } from './lib/store.js'
 import { Notifier } from './lib/notify.js'
 import { Bus } from './lib/server.js'
-import { extractImage, isGroupJid, isIgnorableChat, isSilent, messageText, messageType, prettyJid } from './lib/message.js'
-import { existingMediaPath, mediaPathFor, MediaCache } from './lib/media.js'
+import { extractPreviewMedia, isGroupJid, isIgnorableChat, isSilent, messageText, messageType, prettyJid } from './lib/message.js'
+import { existingMediaPath, mediaByteLimit, mediaPathFor, MediaCache } from './lib/media.js'
 import { validateOutgoingImage } from './lib/outgoing-image.js'
 import { installSignalConsoleRedaction } from './lib/signal-console.js'
 import { contentForStoredMessage, quotedMessageFor, forwardMessageFor } from './lib/message-actions.js'
@@ -69,6 +69,7 @@ const store = new Store()
 const retryCache = new RetryCache(join(stateDir, 'retry'))
 const notifier = new Notifier()
 const media = new MediaCache()
+const pendingVideoResends = new Map()
 const bus = new Bus(socketPath)
 
 let sock = null
@@ -316,13 +317,13 @@ function applyMessageStatus(jid, id, status) {
 
 function flatten(chatJid, message) {
   const ts = toTs(message.messageTimestamp)
-  const image = extractImage(message.message)
+  const previewMedia = extractPreviewMedia(message.message)
   const id = message.key?.id || `${ts}-${Math.random().toString(36).slice(2, 8)}`
   const flat = {
     id,
     ts,
     fromMe: !!message.key?.fromMe,
-    text: image ? (image.caption || messageText(message.message)) : messageText(message.message),
+    text: previewMedia ? (previewMedia.caption || messageText(message.message)) : messageText(message.message),
     type: messageType(message.message),
     senderName: senderNameFor(chatJid, message),
     senderJid: message.key?.participant ? jidNormalizedUser(message.key.participant) : '',
@@ -345,10 +346,12 @@ function flatten(chatJid, message) {
     }
   }
   if (context?.isForwarded || context?.forwardingScore > 0) flat.forwarded = true
-  if (image) {
-    const { caption, ...payload } = image
+  if (previewMedia) {
+    const { caption, ...payload } = previewMedia
     flat.media = payload
-    flat.imagePath = existingMediaPath({ id, media: payload, imagePath: '' })
+    const cached = existingMediaPath({ id, media: payload })
+    if (payload.kind === 'video') flat.videoPath = cached
+    else flat.imagePath = cached
   }
   return flat
 }
@@ -368,6 +371,7 @@ function publishMessagePatch(jid, message) {
     edited: !!message.edited,
     deleted: !!message.deleted,
     imagePath: message.imagePath || '',
+    videoPath: message.videoPath || '',
     reactions: message.reactions || []
   } })
 }
@@ -414,6 +418,17 @@ function ingest(chatJid, raw) {
   const existed = !!store.findMessage(canonicalTarget, message.id)
 
   store.upsertMessage(canonicalTarget, message)
+  const pendingVideo = pendingVideoResends.get(message.id)
+  if (pendingVideo && pendingVideo.jid === canonicalTarget && message.media?.kind === 'video') {
+    clearTimeout(pendingVideo.timer)
+    pendingVideoResends.delete(message.id)
+    try {
+      media.enqueue(canonicalTarget, store.findMessage(canonicalTarget, message.id), { requested: true })
+    } catch (err) {
+      bus.broadcast({ t: 'messageMediaError', jid: canonicalTarget, id: message.id,
+        message: String(err?.message || 'Could not download video') })
+    }
+  }
   const chat = store.touchChat(canonicalTarget, message)
 
   if (!chat.isGroup && !raw.key?.fromMe && raw.pushName) {
@@ -1030,6 +1045,7 @@ async function connect() {
           original.text = 'Message deleted'
           original.deleted = true
           original.imagePath = ''
+          original.videoPath = ''
           original.media = undefined
           publishMessagePatch(canonical, original)
         } else if (original && u.message) {
@@ -1073,6 +1089,7 @@ async function connect() {
         original.text = 'Message deleted'
         original.deleted = true
         original.imagePath = ''
+        original.videoPath = ''
         original.media = undefined
         publishMessagePatch(key.remoteJid, original)
       }
@@ -1273,6 +1290,39 @@ async function handleCommand(payload, reply) {
         })
       }
       return
+
+    case 'downloadMedia': {
+      if (!payload.jid || !payload.messageId) throw new Error('downloadMedia: chat and message required')
+      const canonical = store.canonicalJid(payload.jid) || payload.jid
+      const message = store.findMessage(canonical, String(payload.messageId))
+      if (!message || message.deleted || (message.type !== 'videoMessage' && message.type !== 'ptvMessage'))
+        throw new Error('Video is no longer available')
+      if (!sock || connection !== 'open') throw new Error('WhatsApp is not connected')
+      if (message.media?.kind === 'video') {
+        if (message.media.fileLength && message.media.fileLength > mediaByteLimit(message.media))
+          throw new Error('Video exceeds the 100 MB playback limit')
+        media.enqueue(canonical, message, { requested: true })
+      } else {
+        if (typeof sock.requestPlaceholderResend !== 'function' || !message.key?.id)
+          throw new Error('Video can no longer be retrieved from WhatsApp')
+        const old = pendingVideoResends.get(message.id)
+        if (old) clearTimeout(old.timer)
+        const timer = setTimeout(() => {
+          pendingVideoResends.delete(message.id)
+          bus.broadcast({ t: 'messageMediaError', jid: canonical, id: message.id,
+            message: 'WhatsApp did not return this older video. Try again later.' })
+        }, 20000)
+        timer.unref?.()
+        pendingVideoResends.set(message.id, { jid: canonical, timer })
+        try { await sock.requestPlaceholderResend(message.key) }
+        catch (err) {
+          clearTimeout(timer)
+          pendingVideoResends.delete(message.id)
+          throw err
+        }
+      }
+      return
+    }
 
     case 'send': {
       const rawJid = payload.jid
@@ -1570,7 +1620,15 @@ async function main() {
   media.getSocket = () => sock
   media.onReady = (jid, message) => {
     store.markDirty()
-    bus.broadcast({ t: 'messageMedia', jid, id: message.id, imagePath: message.imagePath || '' })
+    bus.broadcast({ t: 'messageMedia', jid, id: message.id,
+      mediaKind: message.media?.kind || 'image',
+      mediaPath: message.media?.kind === 'video' ? message.videoPath || '' : message.imagePath || '' })
+  }
+  media.onError = (jid, message, err) => {
+    if (message.media?.kind === 'video') {
+      bus.broadcast({ t: 'messageMediaError', jid, id: message.id,
+        message: String(err?.message || 'Could not download video') })
+    }
   }
 
   bus.snapshot = snapshot

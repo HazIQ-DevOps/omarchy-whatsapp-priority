@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.ricky.whatsapp",
   "name": "WhatsApp",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "author": "ricky",
   "license": "MIT",
-  "description": "WhatsApp for the Omarchy bar: unread badge, notifications, replies, forwarding, reactions, editing, and deleting messages.",
+  "description": "WhatsApp for the Omarchy bar: notifications, chat actions, image previews, and received video playback.",
   "kinds": ["bar-widget"],
   "entryPoints": { "barWidget": "BarWidget.qml" },
   "barWidget": {

@@ -70,20 +70,25 @@ function bytesToB64(value) {
   return ''
 }
 
-// Image/sticker payloads we can decrypt later. Video and documents stay labels.
-export function extractImage(message) {
+// Media payloads we can decrypt after a chat is opened. Videos are fetched only
+// when the user asks to play them, so busy groups do not download them all.
+export function extractPreviewMedia(message) {
   const content = normalizeMessageContent(message)
   if (!content) return null
   const type = getContentType(content)
-  if (type !== 'imageMessage' && type !== 'stickerMessage') return null
+  if (type !== 'imageMessage' && type !== 'stickerMessage'
+    && type !== 'videoMessage' && type !== 'ptvMessage') return null
   const node = content[type]
   if (!node || typeof node !== 'object') return null
   const mediaKey = bytesToB64(node.mediaKey)
   if (!mediaKey || !(node.directPath || node.url)) return null
   const fileLength = Number(node.fileLength || 0)
   return {
-    kind: type === 'stickerMessage' ? 'sticker' : 'image',
-    mimetype: node.mimetype || (type === 'stickerMessage' ? 'image/webp' : 'image/jpeg'),
+    kind: type === 'stickerMessage' ? 'sticker'
+      : (type === 'videoMessage' || type === 'ptvMessage') ? 'video' : 'image',
+    messageType: type,
+    mimetype: node.mimetype || (type === 'stickerMessage' ? 'image/webp'
+      : (type === 'videoMessage' || type === 'ptvMessage') ? 'video/mp4' : 'image/jpeg'),
     mediaKey,
     directPath: node.directPath || '',
     url: node.url || '',

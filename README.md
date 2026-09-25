@@ -8,6 +8,13 @@ WhatsApp Web client when you need calls, search, or unsupported media.
 
 The hover preview and main chat list put individuals first and keep groups in a
 collapsed section. Archived chats are omitted from both views and the main search.
+Received videos and video notes can be played in the chat panel: click the video
+tile, or select its message and press **V**. Playback opens in a full-screen
+viewer; **Space** pauses, **Left/Right** seek five seconds, and **Esc** closes it.
+Videos download only when opened and are limited to 100 MB. Playback requires
+the `qt6-multimedia` package and codecs supported by your system.
+Older video entries saved by previous releases ask the linked phone for their
+media details when opened; WhatsApp may no longer be able to return some of them.
 
 <p align="center">
   <img src="docs/inbox.png" alt="Chat list in the Omarchy bar" width="48%" />
@@ -60,7 +67,7 @@ cd omarchy-whatsapp
 ./install.sh
 ```
 
-Requirements: Omarchy 4 (Quattro) and Node.js 20+. If Node lives in a version
+Requirements: Omarchy 4 (Quattro), Node.js 20+, and `qt6-multimedia`. If Node lives in a version
 manager (mise, proto, fnm, volta, nvm) setup finds it and pins the path into
 the service unit.
 

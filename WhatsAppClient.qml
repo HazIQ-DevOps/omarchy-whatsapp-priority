@@ -57,7 +57,8 @@ Item {
   signal messagesLoaded(string jid, var chat, var messages)
   signal messageArrived(string jid, var message, var chat)
   signal messageStatusChanged(string jid, string messageId, int status)
-  signal messageMedia(string jid, string messageId, string imagePath)
+  signal messageMedia(string jid, string messageId, string mediaPath, string mediaKind)
+  signal messageMediaError(string jid, string messageId, string message)
   signal messagePatched(string jid, string messageId, var fields)
   signal messageRemoved(string jid, string messageId)
   signal focusRequested(string jid)
@@ -87,6 +88,7 @@ Item {
   function refresh() { request({ t: "hello" }) }
   function requestChats(limit) { request({ t: "chats", limit: limit || 60 }) }
   function loadMessages(jid, limit) { request({ t: "messages", jid: jid, limit: limit || 60 }) }
+  function downloadMedia(jid, messageId) { return request({ t: "downloadMedia", jid: jid, messageId: messageId }) }
   function refreshInbox(jid, chatLimit, messageLimit) {
     var payload = { t: "refresh", limit: chatLimit || 60 }
     if (jid) {
@@ -258,7 +260,11 @@ Item {
         break
 
       case "messageMedia":
-        root.messageMedia(frame.jid || "", frame.id || "", frame.imagePath || "")
+        root.messageMedia(frame.jid || "", frame.id || "", frame.mediaPath || frame.imagePath || "", frame.mediaKind || "image")
+        break
+
+      case "messageMediaError":
+        root.messageMediaError(frame.jid || "", frame.id || "", frame.message || "Could not download video")
         break
 
       case "messagePatch":

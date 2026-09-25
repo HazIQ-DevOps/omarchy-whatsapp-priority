@@ -79,6 +79,7 @@ export class Store {
       for (const list of this.messages.values()) {
         for (const message of list) {
           if (message.imagePath && !existsSync(message.imagePath)) message.imagePath = ''
+          if (message.videoPath && !existsSync(message.videoPath)) message.videoPath = ''
         }
       }
       for (const [from, to] of this.aliases.entries()) {
