@@ -53,11 +53,14 @@ Panel {
   property string systemAudioSource: ""
   property string preferredAudioSource: ""
   property string audioSourcesError: ""
+  property bool audioSourceSaving: false
   property string searchQuery: ""
   property bool groupsExpanded: false
   property bool emojiPickerOpen: false
   property int emojiCursorIndex: 0
   property string selectedMessageId: ""
+  property string copiedMessageId: ""
+  property string pendingCopyImageId: ""
   property string quotedMessageId: ""
   property string editingMessageId: ""
   property string forwardingMessageId: ""
@@ -325,15 +328,24 @@ Panel {
   }
 
   function saveAudioSource(name) {
-    var entry = { id: root.moduleName }
-    for (var key in root.settings) if (key !== "id") entry[key] = root.settings[key]
-    entry.recordingSource = String(name || "")
-    root.settings = entry
-    if (root.hostWidget) root.hostWidget.settings = entry
-    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
-      root.bar.shell.updateEntryInline(root.moduleName, entry)
-    root.preferredAudioSource = entry.recordingSource
-    root.statusLine = name ? "Microphone selected" : "Using system default microphone"
+    if (root.audioSourceSaving) return
+    root.audioSourceSaving = true
+    voiceSourceSave.command = [root.pluginDir + "/bin/omarchy-whatsapp-voice", "save-source", String(name || "")]
+    voiceSourceSave.running = true
+    root.statusLine = "Saving microphone…"
+  }
+
+  function handleSavedAudioSource(output) {
+    var result
+    try { result = JSON.parse(output) }
+    catch (err) { root.audioSourceSaving = false; root.statusLine = "Could not save microphone"; return }
+    root.audioSourceSaving = false
+    if (result.kind !== "saved") {
+      root.statusLine = result.message || "Could not save microphone"
+      return
+    }
+    root.preferredAudioSource = String(result.name || "")
+    root.statusLine = result.name ? "Microphone saved" : "System default microphone saved"
   }
 
   function handleAudioSources(output) {
@@ -346,6 +358,7 @@ Panel {
     }
     root.audioSources = result.sources || []
     root.systemAudioSource = result.default || ""
+    if (result.saved === true) root.preferredAudioSource = result.selected || ""
     root.audioSourcesError = ""
   }
 
@@ -420,6 +433,37 @@ Panel {
   function selectMessage(id) {
     root.selectedMessageId = id
     keyCatcher.forceActiveFocus()
+  }
+
+  function copyMessage(message) {
+    if (!message || message.deleted) return
+    if (message.imagePath && String(message.imagePath).length) {
+      root.copyImagePath(String(message.imagePath), String(message.id))
+      return
+    }
+    if (message.media && (message.media.kind === "image" || message.media.kind === "sticker")) {
+      root.pendingCopyImageId = String(message.id)
+      if (!root.client || !root.client.downloadMedia(root.activeJid, message.id)) {
+        root.pendingCopyImageId = ""
+        root.statusLine = "WhatsApp is not connected"
+        return
+      }
+      root.statusLine = "Downloading image to copy…"
+      return
+    }
+    if (!message.text || !String(message.text).length) return
+    if (clipboardWriter.running) return
+    clipboardWriter.pendingText = String(message.text)
+    clipboardWriter.pendingMessageId = String(message.id)
+    clipboardWriter.stdinEnabled = true
+    clipboardWriter.running = true
+  }
+
+  function copyImagePath(path, messageId) {
+    if (!path || imageClipboardWriter.running) return
+    imageClipboardWriter.pendingMessageId = messageId
+    imageClipboardWriter.command = [root.pluginDir + "/bin/omarchy-whatsapp-copy-image", path]
+    imageClipboardWriter.running = true
   }
 
   function startReply() {
@@ -679,12 +723,14 @@ Panel {
   }
 
   onActiveJidChanged: {
+    root.pendingCopyImageId = ""
     if (root.pendingImagePath && root.pendingImageJid !== root.activeJid && !root.imageSending)
       root.clearPendingImage(true)
     if (root.voiceState !== "idle" && root.pendingVoiceJid !== root.activeJid)
       root.discardVoice()
   }
   onViewChanged: {
+    if (root.view !== "chat") root.pendingCopyImageId = ""
     if (root.view !== "chat" && root.pendingImagePath && !root.imageSending)
       root.clearPendingImage(true)
     if (root.view !== "chat" && root.voiceState !== "idle") root.discardVoice()
@@ -835,10 +881,21 @@ Panel {
           root.pendingMediaMessageId = ""
           root.statusLine = "Saved to " + mediaPath
         }
-      } else root.patchMessage(messageId, { imagePath: mediaPath })
+      } else {
+        root.patchMessage(messageId, { imagePath: mediaPath })
+        if (root.pendingCopyImageId === messageId) {
+          root.pendingCopyImageId = ""
+          root.copyImagePath(mediaPath, messageId)
+        }
+      }
     }
 
     function onMessageMediaError(jid, messageId, message) {
+      if (root.pendingCopyImageId === messageId) {
+        root.pendingCopyImageId = ""
+        root.statusLine = message || "Could not download image"
+        return
+      }
       if (root.pendingMediaMessageId !== messageId) return
       root.pendingMediaMessageId = ""
       root.statusLine = message || "Could not download media"
@@ -957,6 +1014,20 @@ Panel {
   }
 
   Process {
+    id: voiceSourceSave
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.handleSavedAudioSource(text)
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0) {
+        root.audioSourceSaving = false
+        root.statusLine = "Could not save microphone"
+      }
+    }
+  }
+
+  Process {
     id: voicePrepare
     command: [root.pluginDir + "/bin/omarchy-whatsapp-voice", "prepare"]
     stdout: StdioCollector {
@@ -1019,6 +1090,45 @@ Panel {
   Process {
     id: webLauncher
     command: [root.pluginDir + "/bin/omarchy-whatsapp-open", root.setting("webAppUrl", "https://web.whatsapp.com")]
+  }
+
+  Process {
+    id: clipboardWriter
+    property string pendingText: ""
+    property string pendingMessageId: ""
+    command: ["wl-copy", "--type", "text/plain;charset=utf-8"]
+    stdinEnabled: true
+    onStarted: {
+      write(pendingText)
+      pendingText = ""
+      stdinEnabled = false
+    }
+    onExited: function (exitCode) {
+      stdinEnabled = true
+      if (exitCode === 0) {
+        root.copiedMessageId = pendingMessageId
+        copyFeedback.restart()
+      } else root.statusLine = "Could not copy message"
+      pendingMessageId = ""
+    }
+  }
+
+  Process {
+    id: imageClipboardWriter
+    property string pendingMessageId: ""
+    onExited: function (exitCode) {
+      if (exitCode === 0) {
+        root.copiedMessageId = pendingMessageId
+        copyFeedback.restart()
+      } else root.statusLine = "Could not copy image"
+      pendingMessageId = ""
+    }
+  }
+
+  Timer {
+    id: copyFeedback
+    interval: 1600
+    onTriggered: root.copiedMessageId = ""
   }
 
   Process {
@@ -1107,6 +1217,7 @@ Panel {
               || selectedDocument.type === "documentWithCaptionMessage")) root.downloadDocument(selectedDocument)
           }
           else if (text === "f" || text === "F") root.startForward()
+          else if (text === "c" || text === "C") root.copyMessage(root.selectedMessage())
           else if (text === "e" || text === "E") root.startEdit()
           else if (text === "d" || text === "D") root.requestDelete(false)
           else if (text === "x" || text === "X") root.requestDelete(true)
@@ -1227,7 +1338,7 @@ Panel {
             }
 
             PanelActionButton {
-              iconText: "\uf24d"
+              iconText: "\uf08e"
               tooltipText: "Open the full WhatsApp Web client"
               foreground: root.foreground
               fontFamily: root.fontFamily
@@ -1339,6 +1450,7 @@ Panel {
             fontFamily: root.fontFamily
             bordered: true
             selected: root.preferredAudioSource === ""
+            enabled: !root.audioSourceSaving
             focusable: true
             leftAlign: true
             onClicked: root.saveAudioSource("")
@@ -1354,10 +1466,23 @@ Panel {
               fontFamily: root.fontFamily
               bordered: true
               selected: root.preferredAudioSource === modelData.name
+              enabled: !root.audioSourceSaving
               focusable: true
               leftAlign: true
               onClicked: root.saveAudioSource(modelData.name)
             }
+          }
+
+          Text {
+            width: parent.width
+            visible: root.audioSources.length > 0
+            text: "Voice notes use: " + (root.preferredAudioSource
+              ? root.audioSourceLabel(root.preferredAudioSource) : "System default")
+            textFormat: Text.PlainText
+            color: root.secondaryForeground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
           }
 
           Text {
@@ -1725,6 +1850,8 @@ Panel {
                 readonly property real maxInner: Math.max(Style.space(60), bubbleRow.width * 0.82 - bubbleRow.pad * 2)
                 readonly property bool hasImage: !!messageRow.modelData.imagePath
                   && String(messageRow.modelData.imagePath).length > 0
+                readonly property bool isImageMedia: !!messageRow.modelData.media
+                  && (messageRow.modelData.media.kind === "image" || messageRow.modelData.media.kind === "sticker")
                 readonly property bool hasVideo: !messageRow.modelData.deleted
                   && (messageRow.modelData.type === "videoMessage" || messageRow.modelData.type === "ptvMessage")
                 readonly property bool hasAudio: !messageRow.modelData.deleted
@@ -1773,6 +1900,12 @@ Panel {
                       bubbleRow.hasDocument ? documentTile.width : 0,
                       bodyLabel.visible ? bodyLabel.width : 0,
                       Math.min(metaLabel.implicitWidth, bubbleRow.maxInner))
+
+                    Item {
+                      visible: copyMessageButton.visible
+                      width: parent.width
+                      height: copyMessageButton.height
+                    }
 
                     Text {
                       id: senderLabel
@@ -2042,6 +2175,24 @@ Panel {
                     }
                   }
                 }
+
+                PanelActionButton {
+                  id: copyMessageButton
+                  visible: (bubbleRow.showBody || bubbleRow.hasImage || bubbleRow.isImageMedia) && !messageRow.modelData.deleted
+                  anchors.right: bubble.right
+                  anchors.top: bubble.top
+                  anchors.rightMargin: bubbleRow.pad
+                  anchors.topMargin: bubbleRow.pad / 2
+                  size: Style.space(17)
+                  fontSize: Style.font.caption
+                  iconText: root.copiedMessageId === messageRow.modelData.id ? "\uf00c" : "\uf0c5"
+                  tooltipText: bubbleRow.isImageMedia || bubbleRow.hasImage
+                    ? "Copy image (C when selected)" : "Copy message text (C when selected)"
+                  foreground: root.secondaryForeground
+                  fontFamily: root.fontFamily
+                  z: 2
+                  onClicked: root.copyMessage(messageRow.modelData)
+                }
               }
             }
           }
@@ -2122,7 +2273,7 @@ Panel {
           Text {
             width: parent.width
             visible: root.selectedMessageId.length > 0
-            text: "R reply · F forward · A react · 0 unreact · E edit · D delete me · X delete all · ↑/↓ select · Esc cancel"
+            text: "R reply · F forward · C copy · A react · 0 unreact · E edit · D delete me · X delete all · ↑/↓ select · Esc cancel"
             textFormat: Text.PlainText
             color: root.secondaryForeground
             font.family: root.fontFamily

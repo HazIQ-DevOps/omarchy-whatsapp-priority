@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+# Copy a downloaded WhatsApp image to the Wayland clipboard without putting
+# the image bytes or a shell-escaped command in a process argument.
+set -euo pipefail
+
+path="${1:-}"
+media_dir="${OMARCHY_WHATSAPP_MEDIA:-${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-whatsapp/media}"
+
+[[ -n $path && -f $path && ! -L $path ]] || exit 1
+[[ -d $media_dir ]] || exit 1
+[[ $(realpath -- "$(dirname -- "$path")") == "$(realpath -- "$media_dir")" ]] || exit 1
+
+mime="$(file --brief --mime-type -- "$path")"
+case "$mime" in
+  image/png|image/jpeg|image/webp|image/gif) ;;
+  *) exit 1 ;;
+esac
+
+exec wl-copy --type "$mime" < "$path"

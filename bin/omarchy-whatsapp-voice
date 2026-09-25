@@ -4,6 +4,8 @@ set -euo pipefail
 
 runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 voice_dir="$runtime_dir/omarchy-whatsapp-voice"
+config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/whatsapp-priority"
+source_file="$config_dir/recording-source"
 umask 077
 
 valid_path() {
@@ -29,8 +31,31 @@ case "${1:-}" in
       printf '{"kind":"error","message":"Could not list microphones"}\n'
       exit 0
     fi
-    jq -nc --arg default "$default_source" --argjson sources "$sources" \
-      '{kind:"sources",default:$default,sources:$sources}'
+    saved_source=""
+    saved_selection=false
+    if [[ -f $source_file && ! -L $source_file ]]; then
+      saved_selection=true
+      IFS= read -r saved_source < "$source_file" || true
+    fi
+    jq -nc --arg default "$default_source" --arg selected "$saved_source" \
+      --argjson saved "$saved_selection" --argjson sources "$sources" \
+      '{kind:"sources",default:$default,selected:$selected,saved:$saved,sources:$sources}'
+    ;;
+  save-source)
+    target="${2:-}"
+    if [[ -n $target ]] && ! pactl -f json list sources 2>/dev/null | jq -e --arg target "$target" \
+      'any(.[]; .name == $target and (.name | endswith(".monitor") | not))' >/dev/null; then
+      printf '{"kind":"error","message":"Selected microphone is unavailable"}\n'
+      exit 0
+    fi
+    mkdir -p -m 700 -- "$config_dir"
+    chmod 700 -- "$config_dir"
+    tmp="$(mktemp "$config_dir/.recording-source.XXXXXXXX")"
+    trap 'rm -f -- "$tmp"' EXIT
+    printf '%s\n' "$target" > "$tmp"
+    mv -f -- "$tmp" "$source_file"
+    trap - EXIT
+    jq -nc --arg name "$target" '{kind:"saved",name:$name}'
     ;;
   prepare)
     if ! command -v pw-record >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
@@ -50,6 +75,9 @@ case "${1:-}" in
       exit 1
     fi
     target="${3:-}"
+    if [[ -f $source_file && ! -L $source_file ]]; then
+      IFS= read -r target < "$source_file" || true
+    fi
     if [[ -z $target ]] && command -v pactl >/dev/null 2>&1; then
       target="$(pactl get-default-source 2>/dev/null || true)"
     fi

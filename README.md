@@ -26,7 +26,12 @@ The × button or **Escape** discards it. Recording stops automatically after
 three minutes; nothing is sent until you press Send.
 If the preview is silent, open Settings and choose a specific voice-note
 microphone. The plugin lists the available inputs and leaves your system-wide
-default unchanged. Near-silent recordings show an error before Send.
+default unchanged. Your choice survives shell restarts and plugin updates.
+Near-silent recordings show an error before Send.
+Use the copy icon at the top-right of a message bubble to copy its text or,
+for an image or sticker, the image itself. Images download first if needed.
+Select a message and press **C** for the same
+action. The header's external-link icon opens the full WhatsApp Web client.
 
 <p align="center">
   <img src="docs/inbox.png" alt="Chat list in the Omarchy bar" width="48%" />

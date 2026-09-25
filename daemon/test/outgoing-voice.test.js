@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -43,7 +43,7 @@ test('accepts a private Ogg Opus voice note and rejects other files', () => {
 test('recording helper encodes a playable WhatsApp voice note', { skip: spawnSync('ffmpeg', ['-version']).status !== 0 }, async () => {
   const runtime = mkdtempSync(join(tmpdir(), 'wa-voice-encode-'))
   const helper = fileURLToPath(new URL('../../bin/omarchy-whatsapp-voice', import.meta.url))
-  const env = { ...process.env, XDG_RUNTIME_DIR: runtime }
+  const env = { ...process.env, XDG_RUNTIME_DIR: runtime, XDG_CONFIG_HOME: join(runtime, 'config') }
   try {
     const prepared = JSON.parse(execFileSync('bash', [helper, 'prepare'], { env, encoding: 'utf8' }))
     assert.equal(prepared.kind, 'prepared')
@@ -76,3 +76,44 @@ test('recording helper encodes a playable WhatsApp voice note', { skip: spawnSyn
     rmSync(runtime, { recursive: true, force: true })
   }
 })
+
+test('microphone choice survives a new helper process and overrides a stale shell setting',
+  { skip: spawnSync('jq', ['--version']).status !== 0 }, () => {
+    const runtime = mkdtempSync(join(tmpdir(), 'wa-voice-source-'))
+    const helper = fileURLToPath(new URL('../../bin/omarchy-whatsapp-voice', import.meta.url))
+    const bin = join(runtime, 'bin')
+    const recordedArgs = join(runtime, 'record-args')
+    mkdirSync(bin)
+    writeFileSync(join(bin, 'pactl'), `#!/bin/sh
+if [ "$1" = "get-default-source" ]; then
+  printf 'default.mic\\n'
+else
+  printf '[{"name":"default.mic","description":"Default"},{"name":"chosen.mic","description":"Chosen"}]\\n'
+fi
+`, { mode: 0o755 })
+    writeFileSync(join(bin, 'pw-record'), `#!/bin/sh
+printf '%s\\n' "$@" > "$RECORDED_ARGS"
+`, { mode: 0o755 })
+    writeFileSync(join(bin, 'ffmpeg'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    const env = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      XDG_RUNTIME_DIR: runtime,
+      XDG_CONFIG_HOME: join(runtime, 'config'),
+      RECORDED_ARGS: recordedArgs
+    }
+    try {
+      const saved = JSON.parse(execFileSync('bash', [helper, 'save-source', 'chosen.mic'], { env, encoding: 'utf8' }))
+      assert.deepEqual(saved, { kind: 'saved', name: 'chosen.mic' })
+      const selected = JSON.parse(execFileSync('bash', [helper, 'sources'], { env, encoding: 'utf8' }))
+      assert.equal(selected.saved, true)
+      assert.equal(selected.selected, 'chosen.mic')
+      const prepared = JSON.parse(execFileSync('bash', [helper, 'prepare'], { env, encoding: 'utf8' }))
+      execFileSync('bash', [helper, 'record', prepared.path, 'default.mic'], { env })
+      assert.match(readFileSync(recordedArgs, 'utf8'), /--target\nchosen\.mic\n/)
+      assert.equal(JSON.parse(execFileSync('bash', [helper, 'save-source', ''], { env, encoding: 'utf8' })).name, '')
+      assert.equal(JSON.parse(execFileSync('bash', [helper, 'sources'], { env, encoding: 'utf8' })).saved, true)
+    } finally {
+      rmSync(runtime, { recursive: true, force: true })
+    }
+  })
