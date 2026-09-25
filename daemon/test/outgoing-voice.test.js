@@ -63,6 +63,15 @@ test('recording helper encodes a playable WhatsApp voice note', { skip: spawnSyn
     assert.equal(content.audioMessage.seconds, 1)
     execFileSync('bash', [helper, 'delete', result.path], { env })
     assert.throws(() => validateOutgoingVoice(result.path, runtime))
+
+    const silent = JSON.parse(execFileSync('bash', [helper, 'prepare'], { env, encoding: 'utf8' }))
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi',
+      '-i', 'anullsrc=r=48000:cl=mono', '-t', '1', silent.path])
+    const rejected = JSON.parse(execFileSync('bash', [helper, 'finish', silent.path], { env, encoding: 'utf8' }))
+    assert.equal(rejected.kind, 'error')
+    assert.match(rejected.message, /No microphone audio/)
+    const unavailable = spawnSync('bash', [helper, 'record', silent.path, 'nonexistent.microphone'], { env })
+    assert.equal(unavailable.status, 14)
   } finally {
     rmSync(runtime, { recursive: true, force: true })
   }

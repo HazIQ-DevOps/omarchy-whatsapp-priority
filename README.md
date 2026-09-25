@@ -24,6 +24,9 @@ To send a voice note, click the microphone in a chat or press **Ctrl+Shift+R**.
 Click Stop or press the shortcut again, play the preview, then click Send.
 The × button or **Escape** discards it. Recording stops automatically after
 three minutes; nothing is sent until you press Send.
+If the preview is silent, open Settings and choose a specific voice-note
+microphone. The plugin lists the available inputs and leaves your system-wide
+default unchanged. Near-silent recordings show an error before Send.
 
 <p align="center">
   <img src="docs/inbox.png" alt="Chat list in the Omarchy bar" width="48%" />

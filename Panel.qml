@@ -49,6 +49,10 @@ Panel {
   property string pendingVoiceJid: ""
   property int voiceSeconds: 0
   property double voiceStartedAt: 0
+  property var audioSources: []
+  property string systemAudioSource: ""
+  property string preferredAudioSource: ""
+  property string audioSourcesError: ""
   property string searchQuery: ""
   property bool groupsExpanded: false
   property bool emojiPickerOpen: false
@@ -192,6 +196,7 @@ Panel {
     root.pinToLatest = true
     root.view = "chat"
     root.client.loadMessages(jid, root.messageLimit)
+    if (root.opened) Qt.callLater(function () { composer.forceActiveFocus() })
   }
 
   // User-initiated open: marks the chat read and puts the cursor in the reply box.
@@ -298,6 +303,9 @@ Panel {
 
   function openSettings() {
     priorityField.text = String(root.setting("priorityName", "") || "")
+    root.preferredAudioSource = String(root.setting("recordingSource", "") || "")
+    root.audioSourcesError = ""
+    voiceSources.running = true
     root.view = "settings"
     Qt.callLater(function () { priorityField.forceActiveFocus() })
   }
@@ -314,6 +322,36 @@ Panel {
     root.view = "chats"
     root.statusLine = name ? "Priority sender saved" : "Priority sender cleared"
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
+  }
+
+  function saveAudioSource(name) {
+    var entry = { id: root.moduleName }
+    for (var key in root.settings) if (key !== "id") entry[key] = root.settings[key]
+    entry.recordingSource = String(name || "")
+    root.settings = entry
+    if (root.hostWidget) root.hostWidget.settings = entry
+    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
+      root.bar.shell.updateEntryInline(root.moduleName, entry)
+    root.preferredAudioSource = entry.recordingSource
+    root.statusLine = name ? "Microphone selected" : "Using system default microphone"
+  }
+
+  function handleAudioSources(output) {
+    var result
+    try { result = JSON.parse(output) }
+    catch (err) { root.audioSourcesError = "Could not list microphones"; return }
+    if (result.kind !== "sources") {
+      root.audioSourcesError = result.message || "Could not list microphones"
+      return
+    }
+    root.audioSources = result.sources || []
+    root.systemAudioSource = result.default || ""
+    root.audioSourcesError = ""
+  }
+
+  function audioSourceLabel(name) {
+    var source = root.audioSources.find(function (item) { return item.name === name })
+    return source ? source.label : "Unknown device"
   }
 
   function requestLogout() {
@@ -457,6 +495,7 @@ Panel {
   }
 
   function sendReply() {
+    if (root.voiceState !== "idle" && root.voiceState !== "ready") return
     var text = Model.expandEmoticons(composer.text)
     var hasPendingImage = root.pendingImagePath.length > 0 && root.pendingImageJid === root.activeJid
     var hasPendingVoice = root.pendingVoicePath.length > 0 && root.pendingVoiceJid === root.activeJid
@@ -568,7 +607,8 @@ Panel {
     root.voiceRecordPath = result.path
     root.voiceSeconds = 0
     root.voiceStartedAt = Date.now()
-    voiceRecorder.command = [root.pluginDir + "/bin/omarchy-whatsapp-voice", "record", result.path]
+    voiceRecorder.command = [root.pluginDir + "/bin/omarchy-whatsapp-voice", "record", result.path,
+      String(root.setting("recordingSource", "") || "")]
     root.voiceState = "recording"
     root.statusLine = "Recording voice note"
     voiceRecorder.running = true
@@ -905,6 +945,18 @@ Panel {
   }
 
   Process {
+    id: voiceSources
+    command: [root.pluginDir + "/bin/omarchy-whatsapp-voice", "sources"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.handleAudioSources(text)
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0) root.audioSourcesError = "Could not list microphones"
+    }
+  }
+
+  Process {
     id: voicePrepare
     command: [root.pluginDir + "/bin/omarchy-whatsapp-voice", "prepare"]
     stdout: StdioCollector {
@@ -928,7 +980,8 @@ Panel {
         voiceEncode.running = true
       } else if (root.voiceState === "recording") {
         root.discardVoice()
-        root.statusLine = "Microphone recording stopped unexpectedly"
+        root.statusLine = exitCode === 14 ? "Selected microphone is unavailable. Choose another in Settings"
+          : "Microphone recording stopped unexpectedly"
       }
     }
   }
@@ -1255,6 +1308,79 @@ Panel {
                 root.savePriorityName()
               }
             }
+          }
+
+          PanelSeparator { foreground: root.foreground }
+
+          Text {
+            width: parent.width
+            text: "Voice-note microphone"
+            textFormat: Text.PlainText
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.subtitle
+            font.bold: true
+          }
+
+          Text {
+            width: parent.width
+            text: "Choose the input that picks up your voice. This changes only voice notes in this plugin."
+            textFormat: Text.PlainText
+            color: root.secondaryForeground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            wrapMode: Text.WordWrap
+          }
+
+          Button {
+            width: parent.width
+            text: "System default — " + root.audioSourceLabel(root.systemAudioSource)
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            bordered: true
+            selected: root.preferredAudioSource === ""
+            focusable: true
+            leftAlign: true
+            onClicked: root.saveAudioSource("")
+          }
+
+          Repeater {
+            model: root.audioSources
+            delegate: Button {
+              required property var modelData
+              width: parent.width
+              text: modelData.label
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              bordered: true
+              selected: root.preferredAudioSource === modelData.name
+              focusable: true
+              leftAlign: true
+              onClicked: root.saveAudioSource(modelData.name)
+            }
+          }
+
+          Text {
+            width: parent.width
+            visible: root.audioSourcesError.length > 0
+            text: root.audioSourcesError
+            textFormat: Text.PlainText
+            color: root.bar ? root.bar.urgent : Color.urgent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          Text {
+            width: parent.width
+            visible: root.preferredAudioSource.length > 0
+              && !root.audioSources.some(function (item) { return item.name === root.preferredAudioSource })
+            text: "The selected microphone is disconnected. Choose another input."
+            textFormat: Text.PlainText
+            color: root.bar ? root.bar.urgent : Color.urgent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
           }
         }
 
@@ -1587,7 +1713,7 @@ Panel {
               Item {
                 id: bubbleRow
                 width: parent.width
-                implicitHeight: bubble.height
+                implicitHeight: bubble.height + (reactionsBadge.visible ? reactionsBadge.height / 2 + Style.space(3) : 0)
                 height: implicitHeight
 
                 readonly property real pad: Style.space(8)
@@ -1646,7 +1772,6 @@ Panel {
                       bubbleRow.hasAudio ? audioTile.width : 0,
                       bubbleRow.hasDocument ? documentTile.width : 0,
                       bodyLabel.visible ? bodyLabel.width : 0,
-                      reactionsLabel.visible ? reactionsLabel.width : 0,
                       Math.min(metaLabel.implicitWidth, bubbleRow.maxInner))
 
                     Text {
@@ -1871,15 +1996,6 @@ Panel {
                     }
 
                     Text {
-                      id: reactionsLabel
-                      visible: !!messageRow.modelData.reactions && messageRow.modelData.reactions.length > 0
-                      width: Math.min(implicitWidth, bubbleRow.maxInner)
-                      text: visible ? messageRow.modelData.reactions.map(function(entry) { return entry.emoji }).join(" ") : ""
-                      textFormat: Text.PlainText
-                      font.pixelSize: Style.font.body
-                    }
-
-                    Text {
                       id: metaLabel
                       width: parent.width
                       horizontalAlignment: Text.AlignRight
@@ -1894,6 +2010,35 @@ Panel {
                         : root.secondaryForeground
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
+                    }
+                  }
+
+                  Rectangle {
+                    id: reactionsBadge
+                    visible: !!messageRow.modelData.reactions && messageRow.modelData.reactions.length > 0
+                    width: Math.min(bubble.width - Style.space(8), reactionsText.implicitWidth + Style.space(12))
+                    height: reactionsText.implicitHeight + Style.space(4)
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: -height / 2
+                    anchors.left: messageRow.modelData.fromMe ? undefined : parent.left
+                    anchors.right: messageRow.modelData.fromMe ? parent.right : undefined
+                    anchors.leftMargin: Style.space(6)
+                    anchors.rightMargin: Style.space(6)
+                    radius: height / 2
+                    color: Color.background
+                    border.width: 1
+                    border.color: Style.normalFillFor(root.foreground, Color.accent)
+                    z: 1
+
+                    Text {
+                      id: reactionsText
+                      anchors.centerIn: parent
+                      horizontalAlignment: Text.AlignHCenter
+                      verticalAlignment: Text.AlignVCenter
+                      text: reactionsBadge.visible
+                        ? messageRow.modelData.reactions.map(function(entry) { return entry.emoji }).join(" ") : ""
+                      textFormat: Text.PlainText
+                      font.pixelSize: Style.font.body
                     }
                   }
                 }
@@ -2152,7 +2297,8 @@ Panel {
                 placeholderText: root.linked
                   ? (root.editingMessageId ? "Edit message…" : pendingImagePreview.visible ? "Caption (optional)\u2026" : "Reply\u2026")
                   : "Not connected"
-                enabled: root.linked && !root.imageSending && root.voiceState !== "recording"
+                enabled: root.linked && !root.imageSending
+                readOnly: root.voiceState !== "idle" && root.voiceState !== "ready"
                 onAccepted: root.sendReply()
                 onTextEdited: root.expandComposerShorthand()
                 onTextChanged: {
@@ -2161,7 +2307,11 @@ Panel {
                   typingTimer.restart()
                 }
                 Keys.onPressed: function (event) {
-                  if (event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier)
+                  if (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier)
+                      && (event.modifiers & Qt.ShiftModifier)) {
+                    event.accepted = true
+                    root.toggleVoiceRecording()
+                  } else if (event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier)
                       && !(event.modifiers & Qt.ShiftModifier)) {
                     event.accepted = true
                     root.pasteImageOrText()

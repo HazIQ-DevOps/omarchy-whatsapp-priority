@@ -19,6 +19,19 @@ valid_name() {
 }
 
 case "${1:-}" in
+  sources)
+    if ! command -v pactl >/dev/null 2>&1; then
+      printf '{"kind":"error","message":"Microphone selection needs pactl"}\n'
+      exit 0
+    fi
+    default_source="$(pactl get-default-source 2>/dev/null || true)"
+    if ! sources="$(pactl -f json list sources 2>/dev/null | jq -c '[.[] | select(.name | endswith(".monitor") | not) | {name, label:(.description // .name)}]' 2>/dev/null)"; then
+      printf '{"kind":"error","message":"Could not list microphones"}\n'
+      exit 0
+    fi
+    jq -nc --arg default "$default_source" --argjson sources "$sources" \
+      '{kind:"sources",default:$default,sources:$sources}'
+    ;;
   prepare)
     if ! command -v pw-record >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
       printf '{"kind":"error","message":"Voice notes need pipewire-audio and ffmpeg"}\n'
@@ -36,6 +49,17 @@ case "${1:-}" in
     if ! valid_name "$path" || [[ $path != *.wav || -e $path || -L $path ]]; then
       exit 1
     fi
+    target="${3:-}"
+    if [[ -z $target ]] && command -v pactl >/dev/null 2>&1; then
+      target="$(pactl get-default-source 2>/dev/null || true)"
+    fi
+    if [[ -n $target ]]; then
+      if ! pactl -f json list sources 2>/dev/null | jq -e --arg target "$target" \
+        'any(.[]; .name == $target and (.name | endswith(".monitor") | not))' >/dev/null; then
+        exit 14
+      fi
+      exec pw-record --target "$target" --channels=1 --rate=48000 --format=s16 "$path"
+    fi
     exec pw-record --channels=1 --rate=48000 --format=s16 "$path"
     ;;
   finish)
@@ -48,6 +72,18 @@ case "${1:-}" in
     trap 'rm -f -- "$path" "$output"' EXIT
     if [[ $(stat -c %s -- "$path") -lt 4096 ]]; then
       printf '{"kind":"error","message":"Voice note is too short"}\n'
+      exit 0
+    fi
+    # A valid WAV can still be near-silent when PipeWire picked the wrong mic.
+    # Report that before offering a voice note the recipient could not hear.
+    level_report="$(ffmpeg -hide_banner -nostats -i "$path" -af volumedetect -f null - 2>&1 || true)"
+    mean_volume="$(printf '%s\n' "$level_report" | awk '/mean_volume:/ { value = $(NF-1) } END { print value }')"
+    max_volume="$(printf '%s\n' "$level_report" | awk '/max_volume:/ { value = $(NF-1) } END { print value }')"
+    if [[ $max_volume == "-inf" ]] || {
+      [[ -n $mean_volume && -n $max_volume ]] &&
+        awk -v mean="$mean_volume" -v peak="$max_volume" 'BEGIN { exit !(mean < -60 && peak < -40) }'
+    }; then
+      printf '{"kind":"error","message":"No microphone audio detected. Choose an input in Settings"}\n'
       exit 0
     fi
     if ! ffmpeg -hide_banner -loglevel error -nostdin -y -i "$path" \
