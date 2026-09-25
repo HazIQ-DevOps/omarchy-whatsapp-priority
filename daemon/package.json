@@ -1,6 +1,6 @@
 {
   "name": "omarchy-whatsapp-daemon",
-  "version": "1.2.7",
+  "version": "1.2.8",
   "private": true,
   "description": "WhatsApp bridge for the Omarchy shell. Speaks NDJSON over a unix socket.",
   "license": "MIT",

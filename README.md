@@ -30,6 +30,7 @@ default unchanged. Your choice survives shell restarts and plugin updates.
 Near-silent recordings show an error before Send.
 Use the copy icon at the top-right of a message bubble to copy its text or,
 for an image or sticker, the image itself. Images download first if needed.
+JPEG, WebP, and GIF images are copied as PNG for compatibility with desktop apps.
 Select a message and press **C** for the same
 action. The header's external-link icon opens the full WhatsApp Web client.
 
@@ -85,7 +86,7 @@ cd omarchy-whatsapp
 ```
 
 Requirements: Omarchy 4 (Quattro), Node.js 20+, `qt6-multimedia`, `pipewire-audio`
-(`pw-record`), and `ffmpeg` for outgoing voice notes. If Node lives in a version
+(`pw-record`), and `ffmpeg` for outgoing voice notes and image copying. If Node lives in a version
 manager (mise, proto, fnm, volta, nvm) setup finds it and pins the path into
 the service unit.
 

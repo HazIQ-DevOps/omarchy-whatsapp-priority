@@ -4,7 +4,7 @@ This is a shareable build of the [WhatsApp plugin for Omarchy](https://github.co
 
 ## Install from GitHub
 
-You need Omarchy 4 (Quattro), Node.js 20 or newer, `qt6-multimedia`, and an internet connection for the daemon dependencies. Sending voice notes also needs `pipewire-audio` and `ffmpeg`.
+You need Omarchy 4 (Quattro), Node.js 20 or newer, `qt6-multimedia`, and an internet connection for the daemon dependencies. Sending voice notes also needs `pipewire-audio` and `ffmpeg`. Copying received JPEG, WebP, or GIF images into other apps also uses `ffmpeg` to put PNG on the clipboard.
 
 Run this in a terminal:
 
@@ -17,6 +17,17 @@ Omarchy will ask you to approve and enable the plugin. Click the WhatsApp icon i
 For an offline source archive, extract it, enter the `omarchy-whatsapp-priority` directory, and run `./install.sh` instead.
 
 This build uses the same plugin ID, `io.github.ricky.whatsapp`, as the upstream plugin. `omarchy plugin add` will refuse to install if it is already present. Review or back up that installation first. You can remove the old plugin with `omarchy plugin remove io.github.ricky.whatsapp`, then run the add command. The linked-device credentials and message cache are stored outside the plugin directory. The archive installer also supports `./install.sh --replace` after review.
+
+To update an existing Git installation, run:
+
+```sh
+omarchy plugin update io.github.ricky.whatsapp --yes
+~/.config/omarchy/plugins/io.github.ricky.whatsapp/bin/omarchy-whatsapp-setup
+systemctl --user restart omarchy-whatsapp.service
+omarchy restart shell
+```
+
+Omarchy updates the plugin files, but it does not restart the background WhatsApp service. Check the installed version with `jq -r .version ~/.config/omarchy/plugins/io.github.ricky.whatsapp/manifest.json`.
 
 ## Use
 

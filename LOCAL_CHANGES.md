@@ -16,6 +16,7 @@ This installation is based on [srineshr1/omarchy-whatsapp](https://github.com/sr
 - Use the emoji picker (`Ctrl+E`, arrows, `Enter`) or typed shortcuts such as `:)`, `:D`, `LOL`, and `<3` in replies and captions.
 - Reactions sit in a compact badge overlapping the lower edge of each message bubble, with spacing reserved below so they do not cover the next message.
 - A copy control at the top-right of message bubbles copies text or an image/sticker, downloading the image first if needed. `C` copies a selected message in chat; the full WhatsApp Web button uses a distinct external-link icon.
+- Received JPEG, WebP, and GIF images are converted to PNG when copied so desktop apps that only accept PNG clipboard images can paste them.
 - Outgoing messages use the phone JID when an internal linked-device ID has a known phone mapping. libsignal session dumps are redacted before reaching the local journal.
 - Baileys is pinned to 7.0.0-rc14 for PN/LID session migration and session recovery. Contact mapping uses the current protocol fields and mapping API. The lockfile uses npm registry packages, including libsignal; startup detects outdated installed versions.
 - Original outgoing protobuf payloads are retained in a private, bounded retry cache so resends remain accurate across restarts. Offline tests cover real Signal encryption through an address change and restart, and exact retry payload preservation for text, quotes, images, reactions, edits, and revokes.

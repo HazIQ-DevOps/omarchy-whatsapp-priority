@@ -13,8 +13,18 @@ media_dir="${OMARCHY_WHATSAPP_MEDIA:-${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-wha
 
 mime="$(file --brief --mime-type -- "$path")"
 case "$mime" in
-  image/png|image/jpeg|image/webp|image/gif) ;;
+  image/png)
+    exec wl-copy --type image/png < "$path"
+    ;;
+  image/jpeg|image/webp|image/gif)
+    # Many desktop apps only accept PNG clipboard images even when they can
+    # display JPEG or WebP files. Convert the first frame before copying.
+    command -v ffmpeg >/dev/null 2>&1 || {
+      echo "omarchy-whatsapp: ffmpeg is required to copy this image" >&2
+      exit 1
+    }
+    ffmpeg -nostdin -hide_banner -loglevel error -i "$path" \
+      -map 0:v:0 -frames:v 1 -f image2pipe -c:v png - | wl-copy --type image/png
+    ;;
   *) exit 1 ;;
 esac
-
-exec wl-copy --type "$mime" < "$path"
