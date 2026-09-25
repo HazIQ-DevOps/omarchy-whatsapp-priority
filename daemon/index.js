@@ -21,6 +21,7 @@ import { Bus } from './lib/server.js'
 import { extractPreviewMedia, isGroupJid, isIgnorableChat, isSilent, messageText, messageType, prettyJid } from './lib/message.js'
 import { existingMediaPath, mediaPathFor, safeDocumentName, saveDocumentToDownloads, MediaCache } from './lib/media.js'
 import { validateOutgoingImage } from './lib/outgoing-image.js'
+import { validateOutgoingVoice } from './lib/outgoing-voice.js'
 import { installSignalConsoleRedaction } from './lib/signal-console.js'
 import { contentForStoredMessage, quotedMessageFor, forwardMessageFor } from './lib/message-actions.js'
 import { RetryCache } from './lib/retry-cache.js'
@@ -1394,6 +1395,38 @@ async function handleCommand(payload, reply) {
       recordSentMessage(rawJid, sent)
       try { unlinkSync(image.path) } catch { /* runtime file may already be gone */ }
       reply({ t: 'ack', for: 'sendImage', id, ok: true, jid: rawJid })
+      return
+    }
+
+    case 'sendVoice': {
+      const rawJid = payload.jid
+      if (!rawJid) throw new Error('sendVoice: jid required')
+      if (!sock || connection !== 'open') throw new Error('sendVoice: not connected to WhatsApp')
+      const canonical = store.canonicalJid(rawJid) || rawJid
+      const voice = validateOutgoingVoice(payload.path)
+      const options = {}
+      if (payload.quoted) {
+        const quoted = store.findMessage(canonical, String(payload.quoted))
+        if (!quoted || quoted.deleted) throw new Error('Quoted message is no longer available')
+        options.quoted = quotedMessageFor(quoted)
+        if (!options.quoted) throw new Error('Cannot quote this message')
+      }
+      const sent = await sendWhatsAppMessage(canonical, {
+        audio: { url: voice.path }, mimetype: voice.mimetype, ptt: true
+      }, options)
+      if (!sent) throw new Error('sendVoice: WhatsApp did not accept the voice note')
+      if (sent.key?.id) {
+        try {
+          const cached = mediaPathFor(sent.key.id, voice.mimetype)
+          copyFileSync(voice.path, cached)
+          chmodSync(cached, 0o600)
+        } catch (err) {
+          logger.warn({ err, id: sent.key.id }, 'sendVoice: could not cache sent voice note')
+        }
+      }
+      recordSentMessage(rawJid, sent)
+      try { unlinkSync(voice.path) } catch { /* runtime file may already be gone */ }
+      reply({ t: 'ack', for: 'sendVoice', id, ok: true, jid: rawJid })
       return
     }
 

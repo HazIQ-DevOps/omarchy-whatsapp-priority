@@ -43,6 +43,12 @@ Panel {
   property string pendingImageJid: ""
   property string pasteRequestJid: ""
   property bool imageSending: false
+  property string voiceState: "idle" // preparing, recording, stopping, converting, ready, sending
+  property string voiceRecordPath: ""
+  property string pendingVoicePath: ""
+  property string pendingVoiceJid: ""
+  property int voiceSeconds: 0
+  property double voiceStartedAt: 0
   property string searchQuery: ""
   property bool groupsExpanded: false
   property bool emojiPickerOpen: false
@@ -453,7 +459,8 @@ Panel {
   function sendReply() {
     var text = Model.expandEmoticons(composer.text)
     var hasPendingImage = root.pendingImagePath.length > 0 && root.pendingImageJid === root.activeJid
-    if ((!text || !text.trim().length) && !hasPendingImage) return
+    var hasPendingVoice = root.pendingVoicePath.length > 0 && root.pendingVoiceJid === root.activeJid
+    if ((!text || !text.trim().length) && !hasPendingImage && !hasPendingVoice) return
     if (!root.client || !root.client.ready) {
       root.statusLine = "Not connected to WhatsApp"
       return
@@ -476,6 +483,15 @@ Panel {
       }
       return
     }
+    if (hasPendingVoice) {
+      if (root.voiceState !== "ready") return
+      voicePreviewPlayer.stop()
+      if (root.client.sendVoice(root.activeJid, root.pendingVoicePath, root.quotedMessageId)) {
+        root.voiceState = "sending"
+        root.statusLine = "Sending voice note…"
+      } else root.statusLine = "Could not send the voice note"
+      return
+    }
     if (root.client.sendMessage(root.activeJid, text, root.quotedMessageId)) {
       composer.text = ""
       root.quotedMessageId = ""
@@ -495,8 +511,105 @@ Panel {
       Quickshell.execDetached([root.pluginDir + "/bin/omarchy-whatsapp-paste-image", "delete", path])
   }
 
+  function deleteVoiceFile(path) {
+    if (path) Quickshell.execDetached([root.pluginDir + "/bin/omarchy-whatsapp-voice", "delete", path])
+  }
+
+  function discardVoice() {
+    if (root.voiceState === "sending") return
+    voicePreviewPlayer.stop()
+    voiceClock.stop()
+    if (root.voiceState === "recording" || root.voiceState === "stopping") {
+      root.voiceState = "idle"
+      if (voiceRecorder.processId) Quickshell.execDetached(["kill", "-INT", String(voiceRecorder.processId)])
+      else voiceRecorder.running = false
+    } else root.voiceState = "idle"
+    root.deleteVoiceFile(root.voiceRecordPath)
+    root.deleteVoiceFile(root.pendingVoicePath)
+    root.voiceRecordPath = ""
+    root.pendingVoicePath = ""
+    root.pendingVoiceJid = ""
+    root.voiceSeconds = 0
+  }
+
+  function toggleVoiceRecording() {
+    if (root.voiceState === "recording") {
+      root.voiceState = "stopping"
+      voiceClock.stop()
+      if (voiceRecorder.processId) Quickshell.execDetached(["kill", "-INT", String(voiceRecorder.processId)])
+      else { root.discardVoice(); root.statusLine = "Microphone did not start" }
+      return
+    }
+    if (!root.linked || !root.client || !root.client.ready || root.view !== "chat") return
+    if (root.voiceState !== "idle" && root.voiceState !== "ready") return
+    if (root.pendingImagePath || root.editingMessageId || clipboardCapture.running) {
+      root.statusLine = "Finish the image or edit before recording"
+      return
+    }
+    if (root.voiceState === "ready") root.discardVoice()
+    root.pendingVoiceJid = root.activeJid
+    root.voiceState = "preparing"
+    voicePrepare.running = true
+  }
+
+  function handlePreparedVoice(output) {
+    var result
+    try { result = JSON.parse(output) }
+    catch (err) { root.discardVoice(); root.statusLine = "Could not prepare microphone"; return }
+    if (result.kind !== "prepared" || !result.path) {
+      root.discardVoice()
+      root.statusLine = result.message || "Could not prepare microphone"
+      return
+    }
+    if (root.voiceState !== "preparing" || root.pendingVoiceJid !== root.activeJid || !root.opened) {
+      root.deleteVoiceFile(result.path)
+      return
+    }
+    root.voiceRecordPath = result.path
+    root.voiceSeconds = 0
+    root.voiceStartedAt = Date.now()
+    voiceRecorder.command = [root.pluginDir + "/bin/omarchy-whatsapp-voice", "record", result.path]
+    root.voiceState = "recording"
+    root.statusLine = "Recording voice note"
+    voiceRecorder.running = true
+    voiceClock.start()
+  }
+
+  function handleEncodedVoice(output) {
+    var result
+    try { result = JSON.parse(output) }
+    catch (err) {
+      if (root.voiceState === "converting") {
+        root.discardVoice()
+        root.statusLine = "Could not encode voice note"
+      }
+      return
+    }
+    root.voiceRecordPath = ""
+    if (root.voiceState !== "converting") {
+      if (result.path) root.deleteVoiceFile(result.path)
+      return
+    }
+    if (result.kind !== "voice" || !result.path) {
+      root.discardVoice()
+      root.statusLine = result.message || "Could not encode voice note"
+      return
+    }
+    if (root.voiceState !== "converting" || root.pendingVoiceJid !== root.activeJid || !root.opened) {
+      root.deleteVoiceFile(result.path)
+      return
+    }
+    root.pendingVoicePath = result.path
+    root.voiceState = "ready"
+    root.statusLine = "Voice note ready to send"
+  }
+
   function pasteImageOrText() {
     if (clipboardCapture.running || root.imageSending) return
+    if (root.voiceState !== "idle") {
+      root.statusLine = "Discard or send the voice note before pasting an image"
+      return
+    }
     root.pasteRequestJid = root.activeJid
     clipboardCapture.running = true
   }
@@ -528,12 +641,18 @@ Panel {
   onActiveJidChanged: {
     if (root.pendingImagePath && root.pendingImageJid !== root.activeJid && !root.imageSending)
       root.clearPendingImage(true)
+    if (root.voiceState !== "idle" && root.pendingVoiceJid !== root.activeJid)
+      root.discardVoice()
   }
   onViewChanged: {
     if (root.view !== "chat" && root.pendingImagePath && !root.imageSending)
       root.clearPendingImage(true)
+    if (root.view !== "chat" && root.voiceState !== "idle") root.discardVoice()
   }
-  Component.onDestruction: if (root.pendingImagePath && !root.imageSending) root.clearPendingImage(true)
+  Component.onDestruction: {
+    if (root.pendingImagePath && !root.imageSending) root.clearPendingImage(true)
+    if (root.voiceState !== "idle" && root.voiceState !== "sending") root.discardVoice()
+  }
 
   function openWebClient() {
     webLauncher.running = true
@@ -604,6 +723,7 @@ Panel {
   onOpenedChanged: {
     if (!root.opened) {
       if (root.activeAudioMessageId) root.stopAudio()
+      if (root.voiceState !== "idle" && root.voiceState !== "sending") root.discardVoice()
       return
     }
     root.statusLine = ""
@@ -703,6 +823,18 @@ Panel {
       root.client.setTyping(jid, "paused")
     }
 
+    function onVoiceSendAcknowledged(jid) {
+      if (jid !== root.pendingVoiceJid || root.voiceState !== "sending") return
+      root.pendingVoicePath = ""
+      root.pendingVoiceJid = ""
+      root.voiceState = "idle"
+      root.voiceSeconds = 0
+      root.quotedMessageId = ""
+      root.statusLine = ""
+      typingTimer.stop()
+      root.client.setTyping(jid, "paused")
+    }
+
     function onActionAcknowledged(action, jid) {
       if (["forward", "edit", "react", "delete"].indexOf(action) !== -1)
         root.statusLine = ""
@@ -718,6 +850,11 @@ Panel {
         root.imageSending = false
         root.statusLine = message || "Could not send the image"
         if (root.pendingImageJid !== root.activeJid) root.clearPendingImage(true)
+      }
+      if (command === "sendVoice") {
+        root.voiceState = "ready"
+        root.statusLine = message || "Could not send the voice note"
+        if (root.pendingVoiceJid !== root.activeJid) root.discardVoice()
       }
       if (["forward", "react", "edit", "delete"].indexOf(command) !== -1)
         root.statusLine = message || command + " failed"
@@ -746,6 +883,74 @@ Panel {
     onErrorOccurred: function (error, errorString) {
       root.statusLine = errorString || "Could not play audio"
     }
+  }
+
+  MediaPlayer {
+    id: voicePreviewPlayer
+    source: root.pendingVoicePath.length > 0 ? Qt.resolvedUrl("file://" + root.pendingVoicePath) : ""
+    audioOutput: AudioOutput {}
+    onErrorOccurred: function (error, errorString) {
+      root.statusLine = errorString || "Could not preview voice note"
+    }
+  }
+
+  Timer {
+    id: voiceClock
+    interval: 1000
+    repeat: true
+    onTriggered: {
+      root.voiceSeconds = Math.floor((Date.now() - root.voiceStartedAt) / 1000)
+      if (root.voiceSeconds >= 180) root.toggleVoiceRecording()
+    }
+  }
+
+  Process {
+    id: voicePrepare
+    command: [root.pluginDir + "/bin/omarchy-whatsapp-voice", "prepare"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.handlePreparedVoice(text)
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0 && root.voiceState === "preparing") {
+        root.discardVoice()
+        root.statusLine = "Could not prepare microphone"
+      }
+    }
+  }
+
+  Process {
+    id: voiceRecorder
+    onExited: function (exitCode) {
+      if (root.voiceState === "stopping") {
+        root.voiceState = "converting"
+        voiceEncode.command = [root.pluginDir + "/bin/omarchy-whatsapp-voice", "finish", root.voiceRecordPath]
+        voiceEncode.running = true
+      } else if (root.voiceState === "recording") {
+        root.discardVoice()
+        root.statusLine = "Microphone recording stopped unexpectedly"
+      }
+    }
+  }
+
+  Process {
+    id: voiceEncode
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.handleEncodedVoice(text)
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0 && root.voiceState === "converting") {
+        root.discardVoice()
+        root.statusLine = "Could not encode voice note"
+      }
+    }
+  }
+
+  Shortcut {
+    sequence: "Ctrl+Shift+R"
+    enabled: root.opened && root.view === "chat"
+    onActivated: root.toggleVoiceRecording()
   }
 
   Process {
@@ -1877,6 +2082,61 @@ Panel {
               }
             }
 
+            Rectangle {
+              id: pendingVoicePreview
+              width: parent.width
+              visible: root.voiceState !== "idle" && root.pendingVoiceJid === root.activeJid
+              height: visible ? Style.space(38) : 0
+              radius: Style.cornerRadius
+              color: Style.normalFillFor(root.foreground, Color.accent)
+
+              PanelActionButton {
+                id: voicePlayButton
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(6)
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: voicePreviewPlayer.playbackState === MediaPlayer.PlayingState ? "\uf04c" : "\uf04b"
+                tooltipText: voicePreviewPlayer.playbackState === MediaPlayer.PlayingState ? "Pause voice preview" : "Play voice preview"
+                enabled: root.voiceState === "ready" || root.voiceState === "sending"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: {
+                  if (voicePreviewPlayer.playbackState === MediaPlayer.PlayingState) voicePreviewPlayer.pause()
+                  else voicePreviewPlayer.play()
+                }
+              }
+
+              Text {
+                anchors.left: voicePlayButton.right
+                anchors.right: cancelVoice.left
+                anchors.leftMargin: Style.space(8)
+                anchors.rightMargin: Style.space(6)
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.voiceState === "recording" ? "Recording  " + root.playbackTime(root.voiceSeconds * 1000)
+                  : root.voiceState === "preparing" ? "Opening microphone…"
+                  : root.voiceState === "stopping" || root.voiceState === "converting" ? "Preparing voice note…"
+                  : root.voiceState === "sending" ? "Sending voice note…" : "Voice note  " + root.playbackTime(root.voiceSeconds * 1000)
+                textFormat: Text.PlainText
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+              }
+
+              PanelActionButton {
+                id: cancelVoice
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(6)
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "\uf00d"
+                tooltipText: "Discard voice note"
+                enabled: root.voiceState !== "sending"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.discardVoice()
+              }
+            }
+
             Item {
               width: parent.width
               implicitHeight: Math.max(composer.implicitHeight, sendButton.implicitHeight)
@@ -1892,7 +2152,7 @@ Panel {
                 placeholderText: root.linked
                   ? (root.editingMessageId ? "Edit message…" : pendingImagePreview.visible ? "Caption (optional)\u2026" : "Reply\u2026")
                   : "Not connected"
-                enabled: root.linked && !root.imageSending
+                enabled: root.linked && !root.imageSending && root.voiceState !== "recording"
                 onAccepted: root.sendReply()
                 onTextEdited: root.expandComposerShorthand()
                 onTextChanged: {
@@ -1922,6 +2182,7 @@ Panel {
                     composer.text = ""
                   }
                   else if (pendingImagePreview.visible) root.clearPendingImage(true)
+                  else if (pendingVoicePreview.visible) root.discardVoice()
                   else if (composer.text.length > 0) composer.text = ""
                   else root.back()
                   event.accepted = true
@@ -1930,7 +2191,7 @@ Panel {
 
               PanelActionButton {
                 id: emojiButton
-                anchors.right: sendButton.left
+                anchors.right: voiceButton.left
                 anchors.rightMargin: Style.space(4)
                 anchors.verticalCenter: parent.verticalCenter
                 iconText: "\uf118"
@@ -1943,13 +2204,31 @@ Panel {
               }
 
               PanelActionButton {
+                id: voiceButton
+                anchors.right: sendButton.left
+                anchors.rightMargin: Style.space(4)
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: root.voiceState === "recording" ? "\uf04d" : "\uf130"
+                tooltipText: root.voiceState === "recording" ? "Stop recording (Ctrl+Shift+R)"
+                  : "Record voice note (Ctrl+Shift+R)"
+                enabled: (root.linked || root.voiceState === "recording") && !root.imageSending
+                  && (root.voiceState === "idle" || root.voiceState === "ready" || root.voiceState === "recording")
+                focusable: true
+                foreground: root.voiceState === "recording" ? (root.bar ? root.bar.urgent : Color.accent) : root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.toggleVoiceRecording()
+              }
+
+              PanelActionButton {
                 id: sendButton
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 iconText: "\uf1d8"
-                tooltipText: root.editingMessageId ? "Save edit" : pendingImagePreview.visible ? "Send image" : "Send"
+                tooltipText: root.editingMessageId ? "Save edit" : pendingImagePreview.visible ? "Send image"
+                  : root.voiceState === "ready" ? "Send voice note" : "Send"
                 enabled: root.linked && !root.imageSending
-                  && (composer.text.trim().length > 0 || pendingImagePreview.visible)
+                  && (composer.text.trim().length > 0 || pendingImagePreview.visible || root.voiceState === "ready")
+                  && (root.voiceState === "idle" || root.voiceState === "ready")
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 onClicked: root.sendReply()

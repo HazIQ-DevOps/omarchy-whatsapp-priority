@@ -4,7 +4,7 @@ This is a shareable build of the [WhatsApp plugin for Omarchy](https://github.co
 
 ## Install from GitHub
 
-You need Omarchy 4 (Quattro), Node.js 20 or newer, `qt6-multimedia`, and an internet connection for the daemon dependencies.
+You need Omarchy 4 (Quattro), Node.js 20 or newer, `qt6-multimedia`, and an internet connection for the daemon dependencies. Sending voice notes also needs `pipewire-audio` and `ffmpeg`.
 
 Run this in a terminal:
 
@@ -27,6 +27,8 @@ Press `S` in the chat list, or click the gear, to open Settings. Enter **one** p
 Press `C` on a selected chat to clear its preview from this plugin until a newer message arrives or the shell restarts. This does **not** delete or mark the chat read in WhatsApp. Right-click the icon for the full WhatsApp Web client.
 
 In a conversation, press `Ctrl+V` to attach a copied PNG, JPEG, or WebP image (up to 12 MB). Check the preview, optionally type a caption, then press `Enter` or click Send. `Escape` or the × button removes the pending image without sending it. Plain text still pastes normally.
+
+Click the microphone or press `Ctrl+Shift+R` to record a voice note. Click Stop or press the shortcut again, play the preview, then click Send. Press `Escape` or × to discard it. Recording stops after three minutes, and the note is never sent automatically.
 
 Click a message bubble, or press `Ctrl+Up` from the reply box, to select a message. Use arrows to move between messages. Press `R` for a quoted reply, `F` to forward it to a searched contact, or `A` to react. Press `0` to remove your reaction. For your own text, press `E` to edit. Press `D` to delete a message for yourself, or `X` to delete your own message for everyone; both delete actions ask for confirmation. Select a received video and press `V` to play it, or click its tile. In the viewer, use Space to pause, Left/Right to seek, and Escape to close. Click a voice note or select it and press `P` to play or pause it in chat. Click a document or select it and press `S` to save it to Downloads. Forwarding in this panel supports text, images, and stickers with their original media data. Use the full WhatsApp client for other media types.
 

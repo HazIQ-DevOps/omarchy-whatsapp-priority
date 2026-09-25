@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Prepare, encode, and remove private outgoing voice-note files.
+set -euo pipefail
+
+runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+voice_dir="$runtime_dir/omarchy-whatsapp-voice"
+umask 077
+
+valid_path() {
+  local path="${1:-}"
+  valid_name "$path" || return 1
+  [[ -f $path && ! -L $path ]] || return 1
+  [[ $(stat -c %u -- "$path") == "$(id -u)" ]] || return 1
+}
+
+valid_name() {
+  local path="${1:-}"
+  [[ $(dirname -- "$path") == "$voice_dir" && $(basename -- "$path") =~ ^voice\.[A-Za-z0-9]{8}\.(wav|ogg)$ ]]
+}
+
+case "${1:-}" in
+  prepare)
+    if ! command -v pw-record >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
+      printf '{"kind":"error","message":"Voice notes need pipewire-audio and ffmpeg"}\n'
+      exit 0
+    fi
+    mkdir -p -m 700 -- "$voice_dir"
+    chmod 700 -- "$voice_dir"
+    path="$(mktemp "$voice_dir/voice.XXXXXXXX.wav")"
+    # pw-record creates its output itself and refuses an existing placeholder.
+    rm -f -- "$path"
+    jq -nc --arg path "$path" '{kind:"prepared",path:$path}'
+    ;;
+  record)
+    path="${2:-}"
+    if ! valid_name "$path" || [[ $path != *.wav || -e $path || -L $path ]]; then
+      exit 1
+    fi
+    exec pw-record --channels=1 --rate=48000 --format=s16 "$path"
+    ;;
+  finish)
+    path="${2:-}"
+    if ! valid_path "$path" || [[ $path != *.wav ]]; then
+      printf '{"kind":"error","message":"Invalid voice recording"}\n'
+      exit 0
+    fi
+    output="${path%.wav}.ogg"
+    trap 'rm -f -- "$path" "$output"' EXIT
+    if [[ $(stat -c %s -- "$path") -lt 4096 ]]; then
+      printf '{"kind":"error","message":"Voice note is too short"}\n'
+      exit 0
+    fi
+    if ! ffmpeg -hide_banner -loglevel error -nostdin -y -i "$path" \
+      -vn -ac 1 -ar 48000 -c:a libopus -b:a 32k -application voip \
+      -f ogg "$output" >/dev/null 2>&1; then
+      printf '{"kind":"error","message":"Could not encode voice note"}\n'
+      exit 0
+    fi
+    bytes="$(stat -c %s -- "$output")"
+    if ((bytes < 100 || bytes > 12 * 1024 * 1024)); then
+      printf '{"kind":"error","message":"Voice note exceeds the 12 MB limit"}\n'
+      exit 0
+    fi
+    rm -f -- "$path"
+    trap 'rm -f -- "$output"' EXIT
+    jq -nc --arg path "$output" --argjson bytes "$bytes" \
+      '{kind:"voice",path:$path,bytes:$bytes}'
+    trap - EXIT
+    ;;
+  delete)
+    path="${2:-}"
+    if valid_path "$path"; then rm -f -- "$path"; fi
+    ;;
+  *)
+    printf '{"kind":"error","message":"Unknown voice action"}\n'
+    ;;
+esac

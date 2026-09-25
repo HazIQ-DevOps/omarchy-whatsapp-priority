@@ -66,6 +66,7 @@ Item {
   signal pairCodeReceived(string code)
   signal sendAcknowledged(string jid)
   signal imageSendAcknowledged(string jid)
+  signal voiceSendAcknowledged(string jid)
   signal actionAcknowledged(string action, string jid)
 
   function request(payload) {
@@ -139,6 +140,13 @@ Item {
   function sendImage(jid, path, mime, caption, quotedId) {
     if (!jid || !path || !mime) return false
     var payload = { t: "sendImage", jid: jid, path: path, mime: mime, caption: caption || "" }
+    if (quotedId) payload.quoted = quotedId
+    return request(payload)
+  }
+
+  function sendVoice(jid, path, quotedId) {
+    if (!jid || !path) return false
+    var payload = { t: "sendVoice", jid: jid, path: path }
     if (quotedId) payload.quoted = quotedId
     return request(payload)
   }
@@ -285,6 +293,7 @@ Item {
 
       case "ack":
         if (frame.for === "sendImage" && frame.jid) root.imageSendAcknowledged(frame.jid)
+        if (frame.for === "sendVoice" && frame.jid) root.voiceSendAcknowledged(frame.jid)
         if (frame.for) root.actionAcknowledged(frame.for, frame.jid || "")
         if (frame.jid) root.sendAcknowledged(frame.jid)
         break
