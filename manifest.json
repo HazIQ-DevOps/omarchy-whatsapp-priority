@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.ricky.whatsapp",
   "name": "WhatsApp",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "author": "ricky",
   "license": "MIT",
   "description": "WhatsApp for the Omarchy bar: notifications, chat actions, voice notes, media playback, and document downloads.",
@@ -21,7 +21,7 @@
       "recordingSource": "",
       "hideWhenEmpty": false,
       "chatLimit": 40,
-      "messageLimit": 60,
+      "messageLimit": 200,
       "webAppUrl": "https://web.whatsapp.com",
       "webAppPattern": "web.whatsapp.com"
     },

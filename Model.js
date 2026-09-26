@@ -66,6 +66,26 @@ function isPhotoPlaceholder(text) {
   return /^[\uf03e\uf118]?\s*(Photo|Sticker)?$/i.test(String(text || "").trim())
 }
 
+// Search only the messages already loaded for the open conversation.
+function searchChatMessages(messages, query) {
+  var needle = String(query || "").trim().toLocaleLowerCase()
+  if (!needle) return []
+  return (messages || []).filter(function (message) {
+    return message && !message.deleted && message.text
+      && String(message.text).toLocaleLowerCase().indexOf(needle) !== -1
+  }).reverse()
+}
+
+function cachedGalleryItems(messages, tab) {
+  return (messages || []).filter(function (message) {
+    if (!message || message.deleted) return false
+    if (tab === "documents") return !!(message.cachePath || message.documentPath)
+      && (message.type === "documentMessage" || message.type === "documentWithCaptionMessage")
+    if (tab === "audio") return !!message.audioPath && message.type === "audioMessage"
+    return !!message.imagePath || !!message.videoPath
+  }).reverse()
+}
+
 function chatTitle(chat) {
   if (!chat) return ""
   return chat.name || prettyJid(chat.jid)

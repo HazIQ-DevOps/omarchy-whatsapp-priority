@@ -3,6 +3,15 @@ import test from 'node:test'
 
 import { Store } from '../lib/store.js'
 
+test('conversation requests show the full 200-message local cache', () => {
+  const store = new Store()
+  const jid = 'person@s.whatsapp.net'
+  store.messages.set(jid, Array.from({ length: 200 }, (_, index) => ({ id: String(index) })))
+  assert.equal(store.messageList(jid).length, 200)
+  assert.equal(store.messageList(jid, 500).length, 200)
+  assert.equal(store.messageList(jid, 25).length, 25)
+})
+
 test('unread total excludes muted and archived chats but includes expired mutes', () => {
   const store = new Store()
 

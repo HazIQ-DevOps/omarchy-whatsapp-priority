@@ -444,10 +444,10 @@ export class Store {
     return individuals.slice(0, max).concat(groups.slice(0, max), archived.slice(0, max))
   }
 
-  messageList(jid, limit = 60) {
+  messageList(jid, limit = MAX_MESSAGES_PER_CHAT) {
     const key = this.canonicalJid(jid) || normalizeJid(jid) || jid
     const list = this.messages.get(key) || []
-    return list.slice(-Math.max(1, limit))
+    return list.slice(-Math.min(MAX_MESSAGES_PER_CHAT, Math.max(1, limit)))
   }
 
   findMessage(jid, id) {

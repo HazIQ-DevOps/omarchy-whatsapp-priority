@@ -55,6 +55,14 @@ Panel {
   property string audioSourcesError: ""
   property bool audioSourceSaving: false
   property string searchQuery: ""
+  property bool chatSearchOpen: false
+  property string chatSearchQuery: ""
+  property int chatSearchCursor: 0
+  readonly property var chatSearchResults: Model.searchChatMessages(root.messages, root.chatSearchQuery)
+  property bool galleryOpen: false
+  property string galleryTab: "media"
+  property int galleryCursorIndex: 0
+  readonly property var galleryItems: Model.cachedGalleryItems(root.messages, root.galleryTab)
   property bool groupsExpanded: false
   property bool emojiPickerOpen: false
   property int emojiCursorIndex: 0
@@ -63,6 +71,7 @@ Panel {
   property string pendingCopyImageId: ""
   property string quotedMessageId: ""
   property string editingMessageId: ""
+  property bool editPending: false
   property string forwardingMessageId: ""
   property string forwardingFromJid: ""
   property bool reactionMode: false
@@ -84,7 +93,7 @@ Panel {
   readonly property color foreground: root.bar ? root.bar.foreground : Color.foreground
   readonly property color secondaryForeground: Qt.darker(root.foreground, 1.5)
   readonly property int chatLimit: root.setting("chatLimit", 40)
-  readonly property int messageLimit: root.setting("messageLimit", 60)
+  readonly property int messageLimit: root.setting("messageLimit", 200)
 
   function open() { root.controller.show() }
   function close() { root.controller.hide() }
@@ -130,9 +139,66 @@ Panel {
   }
 
   function focusSearch() {
+    if (root.view === "chat") {
+      root.chatSearchOpen = true
+      Qt.callLater(function () { chatSearchField.forceActiveFocus() })
+      return
+    }
     if (root.view !== "chats" && root.view !== "forward") root.back()
     if (root.client) root.client.requestChats(root.inboxFetchLimit)
     Qt.callLater(function () { searchField.forceActiveFocus() })
+  }
+
+  function jumpToMessage(messageId) {
+    var index = root.messages.findIndex(function (message) { return message.id === messageId })
+    if (index < 0) return
+    root.chatSearchOpen = false
+    root.selectedMessageId = messageId
+    root.pinToLatest = false
+    Qt.callLater(function () {
+      messageList.positionViewAtIndex(index, ListView.Center)
+      keyCatcher.forceActiveFocus()
+    })
+  }
+
+  function openGallery() {
+    if (root.view !== "chat") return
+    root.galleryTab = "media"
+    root.galleryCursorIndex = 0
+    root.galleryOpen = true
+    Qt.callLater(function () { galleryKeys.forceActiveFocus() })
+  }
+
+  function openGalleryItem(message) {
+    if (!message) return
+    if (message.imagePath) root.peekImagePath = message.imagePath
+    else if (message.videoPath) {
+      root.videoError = ""
+      root.peekVideoPath = message.videoPath
+    } else if (message.cachePath || message.documentPath) {
+      Quickshell.execDetached(["xdg-open", message.documentPath || message.cachePath])
+    } else if (message.audioPath) {
+      root.galleryOpen = false
+      root.jumpToMessage(message.id)
+      root.toggleAudio(message)
+    }
+  }
+
+  function moveGalleryCursor(delta) {
+    if (!root.galleryItems.length) return
+    root.galleryCursorIndex = Math.max(0, Math.min(root.galleryItems.length - 1,
+      root.galleryCursorIndex + delta))
+    galleryGrid.positionViewAtIndex(root.galleryCursorIndex, GridView.Contain)
+  }
+
+  onGalleryTabChanged: root.galleryCursorIndex = 0
+  onGalleryOpenChanged: {
+    if (!root.galleryOpen && !root.peekActive && root.opened)
+      Qt.callLater(function () { keyCatcher.forceActiveFocus() })
+  }
+  onPeekActiveChanged: {
+    if (!root.peekActive && root.galleryOpen)
+      Qt.callLater(function () { galleryKeys.forceActiveFocus() })
   }
 
   function insertEmoji(value) {
@@ -196,6 +262,11 @@ Panel {
     root.selectedMessageId = ""
     root.quotedMessageId = ""
     root.editingMessageId = ""
+    root.editPending = false
+    editWatchdog.stop()
+    root.chatSearchOpen = false
+    root.chatSearchQuery = ""
+    root.galleryOpen = false
     root.pinToLatest = true
     root.view = "chat"
     root.client.loadMessages(jid, root.messageLimit)
@@ -221,6 +292,11 @@ Panel {
     root.selectedMessageId = ""
     root.quotedMessageId = ""
     root.editingMessageId = ""
+    root.editPending = false
+    editWatchdog.stop()
+    root.chatSearchOpen = false
+    root.chatSearchQuery = ""
+    root.galleryOpen = false
     root.view = "chats"
     root.activeJid = ""
     root.activeChat = null
@@ -511,16 +587,28 @@ Panel {
     keyCatcher.forceActiveFocus()
   }
 
-  function startEdit() {
-    var message = root.selectedMessage()
-    if (!message || !message.fromMe || message.deleted
-        || (message.type !== "conversation" && message.type !== "extendedTextMessage")) return
+  function canEditMessage(message) {
+    return !!message && message.fromMe && !message.deleted
+      && (message.type === "conversation" || message.type === "extendedTextMessage")
+  }
+
+  function beginEditMessage(message) {
+    if (!root.canEditMessage(message)) return
+    if (root.editPending || root.pendingImagePath || root.pendingVoicePath || root.voiceState !== "idle"
+        || (composer.text.length > 0 && root.editingMessageId !== message.id)) {
+      root.statusLine = "Send or clear your current draft before editing"
+      return
+    }
     root.editingMessageId = message.id
+    root.editPending = false
     root.quotedMessageId = ""
     root.selectedMessageId = ""
     composer.text = message.text || ""
+    root.statusLine = ""
     composer.forceActiveFocus()
   }
+
+  function startEdit() { root.beginEditMessage(root.selectedMessage()) }
 
   function requestDelete(everyone) {
     var message = root.selectedMessage()
@@ -549,10 +637,11 @@ Panel {
       return
     }
     if (root.editingMessageId) {
+      if (root.editPending) return
       if (root.client.editMessage(root.activeJid, root.editingMessageId, text)) {
-        root.editingMessageId = ""
-        composer.text = ""
+        root.editPending = true
         root.statusLine = "Editing…"
+        editWatchdog.restart()
       }
       return
     }
@@ -724,12 +813,20 @@ Panel {
 
   onActiveJidChanged: {
     root.pendingCopyImageId = ""
+    root.chatSearchOpen = false
+    root.chatSearchQuery = ""
+    chatSearchField.text = ""
+    root.galleryOpen = false
     if (root.pendingImagePath && root.pendingImageJid !== root.activeJid && !root.imageSending)
       root.clearPendingImage(true)
     if (root.voiceState !== "idle" && root.pendingVoiceJid !== root.activeJid)
       root.discardVoice()
   }
   onViewChanged: {
+    if (root.view !== "chat") {
+      root.chatSearchOpen = false
+      root.galleryOpen = false
+    }
     if (root.view !== "chat") root.pendingCopyImageId = ""
     if (root.view !== "chat" && root.pendingImagePath && !root.imageSending)
       root.clearPendingImage(true)
@@ -808,6 +905,8 @@ Panel {
 
   onOpenedChanged: {
     if (!root.opened) {
+      root.galleryOpen = false
+      root.chatSearchOpen = false
       if (root.activeAudioMessageId) root.stopAudio()
       if (root.voiceState !== "idle" && root.voiceState !== "sending") root.discardVoice()
       return
@@ -933,6 +1032,12 @@ Panel {
     }
 
     function onActionAcknowledged(action, jid) {
+      if (action === "edit" && root.editPending && jid === root.activeJid) {
+        editWatchdog.stop()
+        root.editPending = false
+        root.editingMessageId = ""
+        composer.text = ""
+      }
       if (["forward", "edit", "react", "delete"].indexOf(action) !== -1)
         root.statusLine = ""
     }
@@ -952,6 +1057,10 @@ Panel {
         root.voiceState = "ready"
         root.statusLine = message || "Could not send the voice note"
         if (root.pendingVoiceJid !== root.activeJid) root.discardVoice()
+      }
+      if (command === "edit") {
+        editWatchdog.stop()
+        root.editPending = false
       }
       if (["forward", "react", "edit", "delete"].indexOf(command) !== -1)
         root.statusLine = message || command + " failed"
@@ -1167,6 +1276,17 @@ Panel {
     onTriggered: root.finishRefresh()
   }
 
+  Timer {
+    id: editWatchdog
+    interval: 20000
+    repeat: false
+    onTriggered: {
+      if (!root.editPending) return
+      root.editPending = false
+      root.statusLine = "Edit not confirmed. Check the message before retrying."
+    }
+  }
+
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -1182,13 +1302,14 @@ Panel {
       anchors.fill: parent
       // Composer, logout confirm, and image peek own keys while they are up.
       blocked: composer.activeFocus || emojiButton.activeFocus || emojiGrid.activeFocus
-        || priorityField.activeFocus || searchField.activeFocus
-        || root.logoutConfirmOpen || root.deleteConfirmOpen || root.peekActive
+        || priorityField.activeFocus || searchField.activeFocus || chatSearchField.activeFocus
+        || root.logoutConfirmOpen || root.deleteConfirmOpen || root.peekActive || root.galleryOpen
 
       onCloseRequested: {
         if (root.peekActive) root.closePeek()
         else if (root.logoutConfirmOpen) root.cancelLogout()
         else if (root.deleteConfirmOpen) root.deleteConfirmOpen = false
+        else if (root.chatSearchOpen) root.chatSearchOpen = false
         else if (root.selectedMessageId) root.selectedMessageId = ""
         else if (root.view === "chat" || root.view === "forward" || root.view === "settings") root.back()
         else root.close()
@@ -1219,6 +1340,7 @@ Panel {
           else if (text === "f" || text === "F") root.startForward()
           else if (text === "c" || text === "C") root.copyMessage(root.selectedMessage())
           else if (text === "e" || text === "E") root.startEdit()
+          else if (text === "g" || text === "G") root.openGallery()
           else if (text === "d" || text === "D") root.requestDelete(false)
           else if (text === "x" || text === "X") root.requestDelete(true)
           else if (text === "a" || text === "A") root.startReaction()
@@ -1227,6 +1349,7 @@ Panel {
         }
         if (text === "r" || text === "R") root.refreshChats()
         else if (text === "/") root.focusSearch()
+        else if ((text === "g" || text === "G") && root.view === "chat") root.openGallery()
         else if ((text === "s" || text === "S") && root.view === "chats") root.openSettings()
         else if ((text === "c" || text === "C") && root.view === "chats") root.clearSelectedChat()
       }
@@ -1317,6 +1440,30 @@ Panel {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.space(2)
+
+            PanelActionButton {
+              visible: root.view === "chat"
+              iconText: "\uf002"
+              tooltipText: "Search this conversation (/)"
+              focusable: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: {
+                root.chatSearchOpen = !root.chatSearchOpen
+                if (root.chatSearchOpen) Qt.callLater(function () { chatSearchField.forceActiveFocus() })
+                else keyCatcher.forceActiveFocus()
+              }
+            }
+
+            PanelActionButton {
+              visible: root.view === "chat"
+              iconText: "\uf00a"
+              tooltipText: "Cached media and documents"
+              focusable: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.openGallery()
+            }
 
             PanelActionButton {
               visible: !root.showLogin && (root.view === "chats" || root.view === "chat")
@@ -1801,10 +1948,112 @@ Panel {
           spacing: Style.space(6)
           visible: !root.showLogin && root.view === "chat"
 
+          Column {
+            width: parent.width
+            spacing: Style.space(5)
+            visible: root.chatSearchOpen
+
+            TextField {
+              id: chatSearchField
+              width: parent.width
+              foreground: root.foreground
+              accent: root.bar ? root.bar.urgent : Color.accent
+              placeholderText: "Search messages in this chat…"
+              onTextChanged: {
+                root.chatSearchQuery = text
+                root.chatSearchCursor = 0
+              }
+              onAccepted: {
+                if (root.chatSearchResults.length > 0)
+                  root.jumpToMessage(root.chatSearchResults[root.chatSearchCursor].id)
+              }
+              Keys.onPressed: function (event) {
+                if (event.key === Qt.Key_Down || event.key === Qt.Key_Up) {
+                  if (root.chatSearchResults.length === 0) return
+                  root.chatSearchCursor = Math.max(0, Math.min(root.chatSearchResults.length - 1,
+                    root.chatSearchCursor + (event.key === Qt.Key_Down ? 1 : -1)))
+                  chatSearchList.positionViewAtIndex(root.chatSearchCursor, ListView.Contain)
+                  event.accepted = true
+                }
+              }
+              Keys.onEscapePressed: function (event) {
+                root.chatSearchOpen = false
+                keyCatcher.forceActiveFocus()
+                event.accepted = true
+              }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.chatSearchQuery.trim().length === 0 || root.chatSearchResults.length === 0
+              text: root.chatSearchQuery.trim().length === 0
+                ? "Search up to 200 locally stored messages in this conversation."
+                : "No matching cached messages."
+              color: root.secondaryForeground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            ListView {
+              id: chatSearchList
+              width: parent.width
+              height: root.chatSearchResults.length > 0 ? Style.space(300) : 0
+              model: root.chatSearchResults
+              clip: true
+              spacing: Style.space(4)
+              boundsBehavior: Flickable.StopAtBounds
+              ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+              delegate: CursorSurface {
+                required property var modelData
+                required property int index
+                width: ListView.view.width
+                height: Style.space(64)
+                foreground: root.foreground
+                accent: root.bar ? root.bar.urgent : Color.accent
+                hasCursor: root.chatSearchCursor === index
+
+                Column {
+                  anchors.fill: parent
+                  anchors.margins: Style.space(7)
+                  spacing: Style.space(3)
+                  Text {
+                    width: parent.width
+                    text: (modelData.fromMe ? "You" : modelData.senderName || "Message")
+                      + " · " + Model.chatTimestamp(modelData.ts)
+                    color: root.secondaryForeground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                  }
+                  Text {
+                    width: parent.width
+                    text: Model.truncate(Model.oneLine(modelData.text), 130)
+                    textFormat: Text.PlainText
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    elide: Text.ElideRight
+                  }
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onContainsMouseChanged: if (containsMouse) root.chatSearchCursor = index
+                  onClicked: root.jumpToMessage(modelData.id)
+                }
+              }
+            }
+          }
+
           ListView {
             id: messageList
             width: parent.width
-            height: Style.space(300)
+            visible: !root.chatSearchOpen
+            height: root.chatSearchOpen ? 0 : Style.space(300)
             model: root.messages
             clip: true
             spacing: Style.space(4)
@@ -1891,6 +2140,8 @@ Panel {
                     y: bubbleRow.pad / 2
                     spacing: Style.space(1)
                     width: Math.max(
+                      editMessageButton.visible
+                        ? editMessageButton.width + copyMessageButton.width + Style.space(4) : 0,
                       bubbleRow.showSender ? senderLabel.width : 0,
                       quoteLabel.visible ? quoteLabel.width : 0,
                       forwardedLabel.visible ? forwardedLabel.width : 0,
@@ -1902,9 +2153,9 @@ Panel {
                       Math.min(metaLabel.implicitWidth, bubbleRow.maxInner))
 
                     Item {
-                      visible: copyMessageButton.visible
+                      visible: copyMessageButton.visible || editMessageButton.visible
                       width: parent.width
-                      height: copyMessageButton.height
+                      height: Math.max(copyMessageButton.height, editMessageButton.height)
                     }
 
                     Text {
@@ -2193,6 +2444,22 @@ Panel {
                   z: 2
                   onClicked: root.copyMessage(messageRow.modelData)
                 }
+
+                PanelActionButton {
+                  id: editMessageButton
+                  visible: root.canEditMessage(messageRow.modelData)
+                  anchors.right: copyMessageButton.left
+                  anchors.rightMargin: Style.space(4)
+                  anchors.top: copyMessageButton.top
+                  size: Style.space(17)
+                  fontSize: Style.font.caption
+                  iconText: "\uf044"
+                  tooltipText: "Edit message (E when selected)"
+                  foreground: root.secondaryForeground
+                  fontFamily: root.fontFamily
+                  z: 2
+                  onClicked: root.beginEditMessage(messageRow.modelData)
+                }
               }
             }
           }
@@ -2209,7 +2476,7 @@ Panel {
           Flow {
             width: parent.width
             spacing: Style.space(4)
-            visible: root.selectedMessageId.length > 0
+            visible: root.selectedMessageId.length > 0 && !root.chatSearchOpen
             Button {
               text: "Reply"
               enabled: !!root.selectedMessage() && !root.selectedMessage().deleted
@@ -2244,9 +2511,7 @@ Panel {
               onClicked: root.removeReaction()
             }
             Button {
-              visible: !!root.selectedMessage() && root.selectedMessage().fromMe
-                && !root.selectedMessage().deleted
-                && (root.selectedMessage().type === "conversation" || root.selectedMessage().type === "extendedTextMessage")
+              visible: root.canEditMessage(root.selectedMessage())
               text: "Edit"
               foreground: root.foreground
               fontFamily: root.fontFamily
@@ -2272,8 +2537,8 @@ Panel {
 
           Text {
             width: parent.width
-            visible: root.selectedMessageId.length > 0
-            text: "R reply · F forward · C copy · A react · 0 unreact · E edit · D delete me · X delete all · ↑/↓ select · Esc cancel"
+            visible: root.selectedMessageId.length > 0 && !root.chatSearchOpen
+            text: "R reply · F forward · C copy · A react · 0 unreact · E edit · G gallery · D delete me · X delete all · ↑/↓ select · Esc cancel"
             textFormat: Text.PlainText
             color: root.secondaryForeground
             font.family: root.fontFamily
@@ -2285,6 +2550,7 @@ Panel {
           Column {
             width: parent.width
             spacing: Style.space(6)
+            visible: !root.chatSearchOpen
 
             Item {
               width: parent.width
@@ -2315,6 +2581,7 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
                 iconText: "\uf00d"
                 tooltipText: "Cancel reply or edit"
+                enabled: !root.editPending
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 onClicked: {
@@ -2449,7 +2716,7 @@ Panel {
                   ? (root.editingMessageId ? "Edit message…" : pendingImagePreview.visible ? "Caption (optional)\u2026" : "Reply\u2026")
                   : "Not connected"
                 enabled: root.linked && !root.imageSending
-                readOnly: root.voiceState !== "idle" && root.voiceState !== "ready"
+                readOnly: root.editPending || (root.voiceState !== "idle" && root.voiceState !== "ready")
                 onAccepted: root.sendReply()
                 onTextEdited: root.expandComposerShorthand()
                 onTextChanged: {
@@ -2458,7 +2725,13 @@ Panel {
                   typingTimer.restart()
                 }
                 Keys.onPressed: function (event) {
-                  if (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier)
+                  if (event.key === Qt.Key_F && (event.modifiers & Qt.ControlModifier)) {
+                    event.accepted = true
+                    root.focusSearch()
+                  } else if (event.key === Qt.Key_G && (event.modifiers & Qt.ControlModifier)) {
+                    event.accepted = true
+                    root.openGallery()
+                  } else if (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier)
                       && (event.modifiers & Qt.ShiftModifier)) {
                     event.accepted = true
                     root.toggleVoiceRecording()
@@ -2477,6 +2750,7 @@ Panel {
                 }
                 Keys.onEscapePressed: function (event) {
                   if (root.emojiPickerOpen) root.toggleEmojiPicker()
+                  else if (root.editPending) root.statusLine = "Waiting for edit confirmation…"
                   else if (root.editingMessageId || root.quotedMessageId) {
                     root.editingMessageId = ""
                     root.quotedMessageId = ""
@@ -2513,6 +2787,7 @@ Panel {
                 tooltipText: root.voiceState === "recording" ? "Stop recording (Ctrl+Shift+R)"
                   : "Record voice note (Ctrl+Shift+R)"
                 enabled: (root.linked || root.voiceState === "recording") && !root.imageSending
+                  && !root.editingMessageId
                   && (root.voiceState === "idle" || root.voiceState === "ready" || root.voiceState === "recording")
                 focusable: true
                 foreground: root.voiceState === "recording" ? (root.bar ? root.bar.urgent : Color.accent) : root.foreground
@@ -2527,7 +2802,7 @@ Panel {
                 iconText: "\uf1d8"
                 tooltipText: root.editingMessageId ? "Save edit" : pendingImagePreview.visible ? "Send image"
                   : root.voiceState === "ready" ? "Send voice note" : "Send"
-                enabled: root.linked && !root.imageSending
+                enabled: root.linked && !root.imageSending && !root.editPending
                   && (composer.text.trim().length > 0 || pendingImagePreview.visible || root.voiceState === "ready")
                   && (root.voiceState === "idle" || root.voiceState === "ready")
                 foreground: root.foreground
@@ -2644,6 +2919,254 @@ Panel {
 
         Keys.onPressed: function (event) {
           if (handleKey(event)) event.accepted = true
+        }
+      }
+    }
+  }
+
+  // ── Chat-local gallery for already cached media and documents ───────
+  PanelWindow {
+    id: galleryOverlay
+    visible: root.galleryOpen
+    anchors { top: true; bottom: true; left: true; right: true }
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.namespace: "omarchy-whatsapp-gallery"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: root.galleryOpen && !root.peekActive
+      ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+
+    onVisibleChanged: if (visible) Qt.callLater(function () { galleryKeys.forceActiveFocus() })
+
+    Rectangle {
+      anchors.fill: parent
+      color: Qt.rgba(0, 0, 0, 0.78)
+      MouseArea { anchors.fill: parent; onClicked: root.galleryOpen = false }
+    }
+
+    Item {
+      id: galleryKeys
+      anchors.fill: parent
+      focus: root.galleryOpen && !root.peekActive
+      Keys.onEscapePressed: function (event) {
+        root.galleryOpen = false
+        event.accepted = true
+      }
+      Keys.onLeftPressed: function (event) {
+        root.moveGalleryCursor(-1)
+        event.accepted = true
+      }
+      Keys.onRightPressed: function (event) {
+        root.moveGalleryCursor(1)
+        event.accepted = true
+      }
+      Keys.onUpPressed: function (event) {
+        root.moveGalleryCursor(-Math.max(1, Math.floor(galleryGrid.width / galleryGrid.cellWidth)))
+        event.accepted = true
+      }
+      Keys.onDownPressed: function (event) {
+        root.moveGalleryCursor(Math.max(1, Math.floor(galleryGrid.width / galleryGrid.cellWidth)))
+        event.accepted = true
+      }
+      Keys.onReturnPressed: function (event) {
+        root.openGalleryItem(root.galleryItems[root.galleryCursorIndex])
+        event.accepted = true
+      }
+      Keys.onEnterPressed: function (event) {
+        root.openGalleryItem(root.galleryItems[root.galleryCursorIndex])
+        event.accepted = true
+      }
+
+      Rectangle {
+        id: galleryCard
+        anchors.centerIn: parent
+        width: Math.min(parent.width * 0.9, Style.space(860))
+        height: Math.min(parent.height * 0.84, Style.space(660))
+        color: Color.background
+        radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(8)
+        border.width: 1
+        border.color: root.secondaryForeground
+        MouseArea { anchors.fill: parent; onClicked: function (event) { event.accepted = true } }
+
+        Text {
+          id: galleryTitle
+          anchors.left: parent.left
+          anchors.right: galleryClose.left
+          anchors.top: parent.top
+          anchors.margins: Style.space(16)
+          text: Model.chatTitle(root.activeChat || { jid: root.activeJid, name: "" }) + " · local files"
+          textFormat: Text.PlainText
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.subtitle
+          font.bold: true
+          elide: Text.ElideRight
+        }
+
+        PanelActionButton {
+          id: galleryClose
+          anchors.top: parent.top
+          anchors.right: parent.right
+          anchors.margins: Style.space(12)
+          iconText: "\uf00d"
+          tooltipText: "Close gallery (Esc)"
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          onClicked: root.galleryOpen = false
+        }
+
+        Row {
+          id: galleryTabs
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.top: galleryTitle.bottom
+          anchors.margins: Style.space(14)
+          spacing: Style.space(8)
+
+          Repeater {
+            model: [
+              { key: "media", label: "Photos & videos" },
+              { key: "documents", label: "Documents" },
+              { key: "audio", label: "Audio" }
+            ]
+            delegate: Rectangle {
+              required property var modelData
+              width: tabLabel.implicitWidth + Style.space(18)
+              height: Style.space(32)
+              radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(4)
+              color: root.galleryTab === modelData.key
+                ? Style.selectedFillFor(root.foreground, root.bar ? root.bar.urgent : Color.accent)
+                : Style.normalFillFor(root.foreground, Color.accent)
+              border.width: root.galleryTab === modelData.key ? 1 : 0
+              border.color: root.bar ? root.bar.urgent : Color.accent
+              Text {
+                id: tabLabel
+                anchors.centerIn: parent
+                text: modelData.label + " (" + Model.cachedGalleryItems(root.messages, modelData.key).length + ")"
+                textFormat: Text.PlainText
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  root.galleryTab = modelData.key
+                  galleryKeys.forceActiveFocus()
+                }
+              }
+            }
+          }
+        }
+
+        GridView {
+          id: galleryGrid
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.top: galleryTabs.bottom
+          anchors.bottom: galleryHint.top
+          anchors.margins: Style.space(14)
+          model: root.galleryItems
+          clip: true
+          cellWidth: Math.max(1, Math.floor(width / (width >= Style.space(570) ? 3 : 2)))
+          cellHeight: Style.space(160)
+          boundsBehavior: Flickable.StopAtBounds
+          ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+          delegate: Item {
+            id: galleryTile
+            required property var modelData
+            required property int index
+            width: galleryGrid.cellWidth
+            height: galleryGrid.cellHeight
+
+            Rectangle {
+              anchors.fill: parent
+              anchors.margins: Style.space(4)
+              radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(5)
+              color: Style.normalFillFor(root.foreground, Color.accent)
+              border.width: root.galleryCursorIndex === galleryTile.index ? 2 : 1
+              border.color: root.galleryCursorIndex === galleryTile.index
+                ? (root.bar ? root.bar.urgent : Color.accent) : root.secondaryForeground
+
+              Image {
+                anchors.fill: parent
+                anchors.margins: Style.space(4)
+                anchors.bottomMargin: Style.space(35)
+                visible: !!galleryTile.modelData.imagePath
+                source: galleryTile.modelData.imagePath
+                  ? Qt.resolvedUrl("file://" + galleryTile.modelData.imagePath) : ""
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true
+                cache: true
+              }
+
+              Text {
+                anchors.centerIn: parent
+                visible: !galleryTile.modelData.imagePath
+                text: galleryTile.modelData.videoPath ? "\uf04b"
+                  : root.galleryTab === "documents" ? "\uf15c" : "\uf028"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title * 2
+              }
+
+              Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: Style.space(36)
+                color: Color.background
+                opacity: 0.92
+                Text {
+                  anchors.fill: parent
+                  anchors.margins: Style.space(5)
+                  text: root.galleryTab === "documents"
+                    ? (galleryTile.modelData.fileName || "Document")
+                    : root.galleryTab === "audio" ? "Voice / audio"
+                      : galleryTile.modelData.videoPath ? "Video" : "Photo"
+                  textFormat: Text.PlainText
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideMiddle
+                  verticalAlignment: Text.AlignVCenter
+                }
+              }
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onContainsMouseChanged: if (containsMouse) root.galleryCursorIndex = galleryTile.index
+                onClicked: root.openGalleryItem(galleryTile.modelData)
+              }
+            }
+          }
+        }
+
+        Text {
+          anchors.centerIn: galleryGrid
+          visible: root.galleryItems.length === 0
+          text: "No cached " + (root.galleryTab === "media" ? "photos or videos"
+            : root.galleryTab === "documents" ? "documents" : "audio") + " in this chat."
+          color: root.secondaryForeground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+        }
+
+        Text {
+          id: galleryHint
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.bottom: parent.bottom
+          anchors.margins: Style.space(14)
+          text: "Local files only · Arrows navigate · Enter opens · Esc closes"
+          textFormat: Text.PlainText
+          color: root.secondaryForeground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
         }
       }
     }

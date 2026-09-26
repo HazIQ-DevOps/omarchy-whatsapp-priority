@@ -33,6 +33,12 @@ for an image or sticker, the image itself. Images download first if needed.
 JPEG, WebP, and GIF images are copied as PNG for compatibility with desktop apps.
 Select a message and press **C** for the same
 action. The header's external-link icon opens the full WhatsApp Web client.
+Your own text bubbles also have a pencil icon for editing. The draft remains
+in the composer until the bridge confirms the change, and remains available if
+the edit fails. The conversation loads the full local cache of up to 200 messages.
+The chat header's magnifying glass searches that conversation's cached message
+text; its grid icon opens local photos, videos, documents, and audio. Search and
+gallery browsing do not fetch older messages or uncached attachments.
 
 <p align="center">
   <img src="docs/inbox.png" alt="Chat list in the Omarchy bar" width="48%" />
@@ -200,7 +206,7 @@ and hot-reload on save:
 | `priorityName` | `""` | One sender name; show the unread indicator in red while they have unread messages |
 | `hideWhenEmpty` | `false` | Hide the widget entirely when nothing is unread |
 | `chatLimit` | `40` | Chats listed in the panel |
-| `messageLimit` | `60` | Messages loaded per conversation |
+| `messageLimit` | `200` | Messages loaded per conversation (the local cache maximum) |
 | `webAppUrl` | `https://web.whatsapp.com` | Full client URL |
 | `webAppPattern` | `web.whatsapp.com` | Window pattern used to focus the full client |
 

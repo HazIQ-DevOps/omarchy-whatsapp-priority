@@ -1247,7 +1247,7 @@ async function handleCommand(payload, reply) {
 
     case 'refresh': {
       const limit = payload.limit || 60
-      const messageLimit = payload.messageLimit || 60
+      const messageLimit = payload.messageLimit || 200
       const jid = payload.jid ? String(payload.jid) : ''
       if (!refreshInFlight && sock && connection === 'open') {
         refreshInFlight = true
@@ -1288,7 +1288,7 @@ async function handleCommand(payload, reply) {
       if (!payload.jid) throw new Error('messages: jid required')
       {
         const canonical = store.canonicalJid(payload.jid) || payload.jid
-        const list = store.messageList(canonical, payload.limit || 60)
+        const list = store.messageList(canonical, payload.limit || 200)
         wantedChats.add(canonical)
         wantedChats.add(normalizeJid(payload.jid))
         reply({
