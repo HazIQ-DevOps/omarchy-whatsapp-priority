@@ -33,6 +33,8 @@ Omarchy updates the plugin files, but it does not restart the background WhatsAp
 
 Hover over the bar icon for a preview with individuals first and groups in a collapsed **Groups** section. Click the Groups row to expand it, or click a contact to open that chat. The click-open panel has the same split; select Groups with the arrow keys and press `Enter` to expand. Archived chats are excluded from both views and from the main panel's search. Search still finds matching groups even while the section is collapsed. Use `j`/`k` or arrow keys to select a chat, `Enter` to open it, and `Escape` to go back. Opening a chat marks it read on WhatsApp. Right-click the bar icon for the full WhatsApp Web client.
 
+The Groups heading shows how many unread messages are in its visible groups, including muted groups. Archived and locally hidden groups are excluded. Audio and video playback follows the current system output, so changing the default to a Bluetooth speaker also changes the plugin's output.
+
 Press `S` in the chat list, or click the gear, to open Settings. Enter **one** priority sender name and save it. The bar indicator turns red while that sender has unread messages; ordinary unread messages keep it green. The same rule checks the most recent sender in a group chat. The name must match the sender's displayed name, ignoring case and extra spaces.
 
 Press `C` on a selected chat to clear its preview from this plugin until a newer message arrives or the shell restarts. This does **not** delete or mark the chat read in WhatsApp. Right-click the icon for the full WhatsApp Web client.

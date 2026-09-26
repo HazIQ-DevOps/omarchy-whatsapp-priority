@@ -47,6 +47,7 @@ BarWidget {
   })
   readonly property var hoverIndividuals: root.hoverSections.individuals
   readonly property var hoverGroups: root.hoverSections.groups
+  readonly property int hoverGroupUnread: Model.unreadMessageCount(root.hoverGroups)
 
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
@@ -375,13 +376,28 @@ BarWidget {
 
           Text {
             anchors.left: parent.left
-            anchors.right: parent.right
+            anchors.right: hoverGroupUnreadLabel.left
             anchors.verticalCenter: parent.verticalCenter
             anchors.margins: Style.space(9)
             text: (root.hoverGroupsExpanded ? "▾" : "▸") + "  Groups (" + root.hoverGroups.length + ")"
             textFormat: Text.PlainText
             color: root.bar ? root.bar.foreground : Color.foreground
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.bold: true
+            elide: Text.ElideRight
+          }
+
+          Text {
+            id: hoverGroupUnreadLabel
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.rightMargin: Style.space(9)
+            visible: root.hoverGroupUnread > 0
+            text: visible ? String(root.hoverGroupUnread) + " unread" : ""
+            textFormat: Text.PlainText
+            color: "#25D366"
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
             font.bold: true
           }
 

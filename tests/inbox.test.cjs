@@ -5,8 +5,8 @@ const { runInNewContext } = require('node:vm')
 const { test } = require('node:test')
 
 const source = readFileSync(join(__dirname, '..', 'Model.js'), 'utf8')
-const { inboxRows, hoverSections } = runInNewContext(
-  source.replace(/^\.pragma library\s*/, '') + '\n;({ inboxRows, hoverSections })', {}
+const { inboxRows, hoverSections, unreadMessageCount } = runInNewContext(
+  source.replace(/^\.pragma library\s*/, '') + '\n;({ inboxRows, hoverSections, unreadMessageCount })', {}
 )
 
 const chats = [
@@ -58,4 +58,21 @@ test('busy muted groups do not displace individual hover cards', () => {
   const sections = hoverSections(groupOnlyUnread, 5, () => false)
   assert.equal(sections.individuals[0].jid, 'friend@s.whatsapp.net')
   assert.equal(sections.groups[0].jid, 'busy@g.us')
+})
+
+test('both group headings count unread messages in visible groups', () => {
+  const withUnread = [
+    { jid: 'friend@s.whatsapp.net', unread: 4 },
+    { jid: 'family@g.us', isGroup: true, unread: 2 },
+    { jid: 'busy@g.us', isGroup: true, muted: true, unread: 3 },
+    { jid: 'archived@g.us', isGroup: true, archived: true, unread: 8 },
+    { jid: 'hidden@g.us', isGroup: true, unread: 7 },
+  ]
+  const isDismissed = chat => chat.jid === 'hidden@g.us'
+  const header = inboxRows(withUnread, 'chats', '', false, 40, isDismissed)
+    .find(row => row.isGroupHeader)
+  assert.equal(header.groupCount, 2)
+  assert.equal(header.groupUnreadCount, 5)
+  const hover = hoverSections(withUnread, 5, isDismissed)
+  assert.equal(unreadMessageCount(hover.groups), 5)
 })

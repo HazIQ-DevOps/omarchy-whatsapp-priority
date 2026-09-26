@@ -18,6 +18,7 @@ This installation is based on [srineshr1/omarchy-whatsapp](https://github.com/sr
 - A copy control at the top-right of message bubbles copies text or an image/sticker, downloading the image first if needed. `C` copies a selected message in chat; the full WhatsApp Web button uses a distinct external-link icon.
 - Your own text bubbles show a pencil button for editing. The edit draft stays in the composer until the bridge acknowledges it, so failures can be retried.
 - Chats load up to the local maximum of 200 messages. Each open chat has a separate text search and a screen-centered grid for locally cached photos, videos, documents, and audio; browsing does not trigger network downloads.
+- Both Groups headings show the total unread messages in visible groups, including muted groups. All three media players track the system's current default audio output so Bluetooth device changes take effect without restarting the shell.
 - Video bubbles and gallery tiles use an embedded WhatsApp JPEG poster when present, or an FFmpeg frame from a video already in the local cache. Documents have type-specific icons, and outbound text links use Baileys' preview support when a site supplies metadata.
 - Received JPEG, WebP, and GIF images are converted to PNG when copied so desktop apps that only accept PNG clipboard images can paste them.
 - Outgoing messages use the phone JID when an internal linked-device ID has a known phone mapping. libsignal session dumps are redacted before reaching the local journal.

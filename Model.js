@@ -140,10 +140,17 @@ function inboxRows(chats, view, query, groupsExpanded, chatLimit, isDismissed) {
     return individuals.slice(0, limit).concat(groups.slice(0, limit))
   var rows = individuals.slice(0, limit)
   if (groups.length > 0) {
-    rows.push({ isGroupHeader: true, groupCount: groups.length })
+    rows.push({ isGroupHeader: true, groupCount: groups.length,
+      groupUnreadCount: unreadMessageCount(groups) })
     if (groupsExpanded) rows = rows.concat(groups.slice(0, limit))
   }
   return rows
+}
+
+function unreadMessageCount(chats) {
+  return (chats || []).reduce(function(total, chat) {
+    return total + Math.max(0, Number(chat.unread) || 0)
+  }, 0)
 }
 
 function hoverSections(chats, individualLimit, isDismissed) {

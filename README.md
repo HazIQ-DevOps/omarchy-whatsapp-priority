@@ -8,6 +8,8 @@ WhatsApp Web client when you need calls, search, or unsupported media.
 
 The hover preview and main chat list put individuals first and keep groups in a
 collapsed section. Archived chats are omitted from both views and the main search.
+Each Groups heading shows the unread message count for the groups it contains,
+including muted groups; archived and locally hidden groups are excluded.
 Received videos and video notes can be played in the chat panel: click the video
 tile, or select its message and press **V**. Playback opens in a full-screen
 viewer; **Space** pauses, **Left/Right** seek five seconds, and **Esc** closes it.
@@ -25,6 +27,8 @@ control or select the message and press **P**. Documents have a download tile;
 click it or select the message and press **S** to save a copy in your Downloads
 folder. Audio and documents download only when opened, with 50 MB and 200 MB
 limits respectively. Existing filenames are never overwritten.
+Voice notes, voice previews, and videos follow the system's current default
+audio output, including when a Bluetooth speaker is connected or disconnected.
 To send a voice note, click the microphone in a chat or press **Ctrl+Shift+R**.
 Click Stop or press the shortcut again, play the preview, then click Send.
 The × button or **Escape** discards it. Recording stops automatically after

@@ -95,6 +95,8 @@ Panel {
   readonly property int chatLimit: root.setting("chatLimit", 40)
   readonly property int messageLimit: root.setting("messageLimit", 200)
 
+  MediaDevices { id: playbackDevices }
+
   function open() { root.controller.show() }
   function close() { root.controller.hide() }
 
@@ -1082,7 +1084,7 @@ Panel {
   MediaPlayer {
     id: voicePlayer
     source: root.audioPath.length > 0 ? Qt.resolvedUrl("file://" + root.audioPath) : ""
-    audioOutput: AudioOutput {}
+    audioOutput: AudioOutput { device: playbackDevices.defaultAudioOutput }
     onSourceChanged: {
       if (root.audioPath.length > 0) play()
     }
@@ -1094,7 +1096,7 @@ Panel {
   MediaPlayer {
     id: voicePreviewPlayer
     source: root.pendingVoicePath.length > 0 ? Qt.resolvedUrl("file://" + root.pendingVoicePath) : ""
-    audioOutput: AudioOutput {}
+    audioOutput: AudioOutput { device: playbackDevices.defaultAudioOutput }
     onErrorOccurred: function (error, errorString) {
       root.statusLine = errorString || "Could not preview voice note"
     }
@@ -1887,7 +1889,7 @@ Panel {
 
             Text {
               anchors.left: parent.left
-              anchors.right: parent.right
+              anchors.right: groupUnreadLabel.left
               anchors.verticalCenter: parent.verticalCenter
               anchors.margins: Style.space(8)
               text: (root.groupsExpanded ? "▾" : "▸") + "  Groups ("
@@ -1898,6 +1900,22 @@ Panel {
               font.pixelSize: Style.font.body
               font.bold: true
               elide: Text.ElideRight
+            }
+
+            Text {
+              id: groupUnreadLabel
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.rightMargin: Style.space(8)
+              visible: root.groupHeaderIndex >= 0
+                && root.visibleChats[root.groupHeaderIndex].groupUnreadCount > 0
+              text: visible ? String(root.visibleChats[root.groupHeaderIndex].groupUnreadCount)
+                + " unread" : ""
+              textFormat: Text.PlainText
+              color: "#25D366"
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
             }
 
             MouseArea {
@@ -3357,7 +3375,7 @@ Panel {
           id: peekVideoPlayer
           source: root.peekVideoPath.length > 0 ? Qt.resolvedUrl("file://" + root.peekVideoPath) : ""
           videoOutput: peekVideo
-          audioOutput: AudioOutput {}
+          audioOutput: AudioOutput { device: playbackDevices.defaultAudioOutput }
           onSourceChanged: {
             if (root.peekVideoPath.length > 0) play()
           }
