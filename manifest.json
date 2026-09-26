@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.ricky.whatsapp",
   "name": "WhatsApp",
-  "version": "1.2.9",
+  "version": "1.2.10",
   "author": "ricky",
   "license": "MIT",
   "description": "WhatsApp for the Omarchy bar: notifications, chat actions, voice notes, media playback, and document downloads.",

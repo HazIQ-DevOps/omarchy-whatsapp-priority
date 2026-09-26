@@ -86,6 +86,27 @@ function cachedGalleryItems(messages, tab) {
   }).reverse()
 }
 
+function documentKind(fileName) {
+  var name = String(fileName || "").toLowerCase()
+  var extension = (name.match(/\.([a-z0-9]+)$/) || [])[1] || ""
+  if (/^(zip|rar|7z|tar|gz|bz2|xz|zst|tgz|cab)$/.test(extension))
+    return { icon: "\uf1c6", label: "Archive" }
+  if (extension === "pdf") return { icon: "\uf1c1", label: "PDF" }
+  if (/^(doc|docx|odt|rtf)$/.test(extension)) return { icon: "\uf1c2", label: "Document" }
+  if (/^(xls|xlsx|ods|csv)$/.test(extension)) return { icon: "\uf1c3", label: "Spreadsheet" }
+  if (/^(ppt|pptx|odp)$/.test(extension)) return { icon: "\uf1c4", label: "Presentation" }
+  if (/^(txt|md|log)$/.test(extension)) return { icon: "\uf15c", label: "Text" }
+  if (/^(js|ts|py|sh|html|css|json|xml|yaml|yml)$/.test(extension))
+    return { icon: "\uf1c9", label: "Code" }
+  if (/^(mp3|m4a|ogg|opus|wav|flac)$/.test(extension))
+    return { icon: "\uf1c7", label: "Audio" }
+  if (/^(mp4|mov|webm|mkv|avi)$/.test(extension))
+    return { icon: "\uf1c8", label: "Video" }
+  if (/^(jpg|jpeg|png|gif|webp|svg)$/.test(extension))
+    return { icon: "\uf1c5", label: "Image" }
+  return { icon: "\uf15b", label: extension ? extension.toUpperCase() : "File" }
+}
+
 function chatTitle(chat) {
   if (!chat) return ""
   return chat.name || prettyJid(chat.jid)

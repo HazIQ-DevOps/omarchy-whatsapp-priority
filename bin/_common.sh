@@ -59,8 +59,7 @@ wa_node() {
 wa_ensure_deps() {
   local node npm
   node="$(wa_node)"
-  if [[ -f $WA_DAEMON_DIR/node_modules/baileys/package.json ]] &&
-    "$node" -e 'const fs = require("node:fs"); const path = require("node:path"); const dir = process.argv[1]; const wanted = JSON.parse(fs.readFileSync(path.join(dir, "package.json"))).dependencies.baileys; const installed = JSON.parse(fs.readFileSync(path.join(dir, "node_modules/baileys/package.json"))).version; process.exit(installed === wanted ? 0 : 1)' "$WA_DAEMON_DIR"; then
+  if "$node" -e 'const fs = require("node:fs"); const path = require("node:path"); const dir = process.argv[1]; const deps = JSON.parse(fs.readFileSync(path.join(dir, "package.json"))).dependencies; for (const [name, wanted] of Object.entries(deps)) { try { const installed = JSON.parse(fs.readFileSync(path.join(dir, "node_modules", name, "package.json"))).version; if (installed !== wanted) process.exit(1) } catch { process.exit(1) } }' "$WA_DAEMON_DIR"; then
     return 0
   fi
   npm="$(dirname "$node")/npm"

@@ -5,8 +5,8 @@ const { runInNewContext } = require('node:vm')
 const { test } = require('node:test')
 
 const source = readFileSync(join(__dirname, '..', 'Model.js'), 'utf8')
-const { searchChatMessages, cachedGalleryItems } = runInNewContext(
-  source.replace(/^\.pragma library\s*/, '') + '\n;({ searchChatMessages, cachedGalleryItems })', {}
+const { searchChatMessages, cachedGalleryItems, documentKind } = runInNewContext(
+  source.replace(/^\.pragma library\s*/, '') + '\n;({ searchChatMessages, cachedGalleryItems, documentKind })', {}
 )
 
 const messages = [
@@ -28,4 +28,11 @@ test('gallery shows only files already cached for the open chat', () => {
   assert.deepEqual(Array.from(cachedGalleryItems(messages, 'media'), message => message.id), ['four', 'two'])
   assert.deepEqual(Array.from(cachedGalleryItems(messages, 'documents'), message => message.id), ['five'])
   assert.deepEqual(Array.from(cachedGalleryItems(messages, 'audio'), message => message.id), ['six'])
+})
+
+test('document tiles distinguish archives and common file types', () => {
+  assert.equal(documentKind('backup.tar.gz').label, 'Archive')
+  assert.equal(documentKind('invoice.pdf').label, 'PDF')
+  assert.equal(documentKind('budget.xlsx').label, 'Spreadsheet')
+  assert.equal(documentKind('unknown.blob').label, 'BLOB')
 })

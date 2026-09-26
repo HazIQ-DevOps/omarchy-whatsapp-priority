@@ -4,7 +4,7 @@ This is a shareable build of the [WhatsApp plugin for Omarchy](https://github.co
 
 ## Install from GitHub
 
-You need Omarchy 4 (Quattro), Node.js 20 or newer, `qt6-multimedia`, and an internet connection for the daemon dependencies. Sending voice notes also needs `pipewire-audio` and `ffmpeg`. Copying received JPEG, WebP, or GIF images into other apps also uses `ffmpeg` to put PNG on the clipboard.
+You need Omarchy 4 (Quattro), Node.js 20 or newer, `qt6-multimedia`, and an internet connection for the daemon dependencies. Sending voice notes also needs `pipewire-audio` and `ffmpeg`. Copying received JPEG, WebP, or GIF images into other apps and generating thumbnails for previously downloaded videos also uses `ffmpeg`.
 
 Run this in a terminal:
 
@@ -45,6 +45,8 @@ If the note is silent, open Settings and choose the microphone that picks up you
 Click a message bubble, or press `Ctrl+Up` from the reply box, to select a message. Use arrows to move between messages. Press `R` for a quoted reply, `F` to forward it to a searched contact, or `A` to react. Press `0` to remove your reaction. For your own text, click its pencil icon or select it and press `E` to edit. The draft stays in the composer until WhatsApp confirms the edit; errors leave it available to retry. Press `D` to delete a message for yourself, or `X` to delete your own message for everyone; both delete actions ask for confirmation. Select a received video and press `V` to play it, or click its tile. In the viewer, use Space to pause, Left/Right to seek, and Escape to close. Click a voice note or select it and press `P` to play or pause it in chat. Click a document or select it and press `S` to save it to Downloads. Forwarding in this panel supports text, images, and stickers with their original media data. Use the full WhatsApp client for other media types.
 
 The chat loads up to 200 locally stored messages. Click the magnifying glass in an open chat, press `/` with a message selected, or press `Ctrl+F` from the composer to search that conversation's cached message text. Choose a result to jump to and highlight it. Click the grid icon, press `G` with a message selected, or press `Ctrl+G` from the composer to browse locally cached photos, videos, documents, and audio in a larger window; arrows and Enter navigate it. These views do not fetch older WhatsApp history or download media that is not already cached.
+
+Video bubbles and the local media grid show poster frames when WhatsApp supplies one or the video is already cached. Document bubbles and gallery tiles show type icons for archives, PDFs, spreadsheets, and other common files. Links sent in text get a WhatsApp preview when the linked website supplies metadata; a normal link is still sent if no preview is available.
 
 Click the copy icon at the top-right of a bubble to copy a text message or an image/sticker. An image downloads first if needed. Press `C` on a selected message for the same action. For an image with a caption, copy selects the image. The external-link icon in the header opens the full WhatsApp Web client.
 

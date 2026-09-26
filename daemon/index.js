@@ -20,6 +20,7 @@ import { Notifier } from './lib/notify.js'
 import { Bus } from './lib/server.js'
 import { extractPreviewMedia, isGroupJid, isIgnorableChat, isSilent, messageText, messageType, prettyJid } from './lib/message.js'
 import { existingMediaPath, mediaPathFor, safeDocumentName, saveDocumentToDownloads, MediaCache } from './lib/media.js'
+import { cacheJpegThumbnail, ensureVideoThumbnail } from './lib/thumbnails.js'
 import { validateOutgoingImage } from './lib/outgoing-image.js'
 import { validateOutgoingVoice } from './lib/outgoing-voice.js'
 import { installSignalConsoleRedaction } from './lib/signal-console.js'
@@ -342,6 +343,15 @@ function flatten(chatJid, message) {
   }
   const content = normalizeMessageContent(message.message)
   const node = content?.[getContentType(content)]
+  if (content?.extendedTextMessage?.title) {
+    const link = content.extendedTextMessage
+    flat.linkPreview = {
+      title: link.title,
+      description: link.description || '',
+      url: link.matchedText || '',
+      thumbnailPath: cacheJpegThumbnail(id, 'link', link.jpegThumbnail)
+    }
+  }
   const context = node?.contextInfo
   if (context?.stanzaId) {
     flat.quote = {
@@ -355,7 +365,11 @@ function flatten(chatJid, message) {
     const { caption, ...payload } = previewMedia
     flat.media = payload
     const cached = existingMediaPath({ id, media: payload })
-    if (payload.kind === 'video') flat.videoPath = cached
+    if (payload.kind === 'video') {
+      flat.videoPath = cached
+      const thumbnail = cacheJpegThumbnail(id, 'video', node?.jpegThumbnail)
+      if (thumbnail) flat.videoThumbnailPath = thumbnail
+    }
     else if (payload.kind === 'audio') flat.audioPath = cached
     else if (payload.kind === 'document') flat.cachePath = cached
     else flat.imagePath = cached
@@ -379,10 +393,22 @@ function publishMessagePatch(jid, message) {
     deleted: !!message.deleted,
     imagePath: message.imagePath || '',
     videoPath: message.videoPath || '',
+    videoThumbnailPath: message.videoThumbnailPath || '',
     audioPath: message.audioPath || '',
     documentPath: message.documentPath || '',
     reactions: message.reactions || []
   } })
+}
+
+function backfillVideoThumbnail(jid, message) {
+  if (!message?.videoPath || message.videoThumbnailPath || message.deleted) return
+  ensureVideoThumbnail(message).then((path) => {
+    if (!path || message.deleted || message.videoThumbnailPath === path) return
+    message.videoThumbnailPath = path
+    store.markDirty()
+    bus.broadcast({ t: 'messagePatch', jid, id: message.id,
+      fields: { videoThumbnailPath: path } })
+  }).catch((err) => logger.debug({ err }, 'video thumbnail generation failed'))
 }
 
 function messageForAction(jid, messageId) {
@@ -790,7 +816,7 @@ async function connect() {
       fireInitQueries: true,
       connectTimeoutMs: 30000,
       defaultQueryTimeoutMs: 30000,
-      // Link previews and media thumbnails are never rendered here.
+      // Keep chat history available for locally rendered link and video posters.
       shouldSyncHistoryMessage: () => true,
       // Lets Baileys retry / poll-decrypt using messages we already stored.
       getMessage: getStoredMessage
@@ -1277,6 +1303,7 @@ async function handleCommand(payload, reply) {
         })
         for (const message of list) {
           if (message.media && !existingMediaPath(message)) media.enqueue(canonical, message)
+          backfillVideoThumbnail(canonical, message)
         }
       } else {
         reply({ t: 'chats', chats, unread, attentionChats: store.attentionChats() })
@@ -1299,6 +1326,7 @@ async function handleCommand(payload, reply) {
         })
         for (const message of list) {
           if (message.media && !existingMediaPath(message)) media.enqueue(canonical, message)
+          backfillVideoThumbnail(canonical, message)
         }
         refreshMissingImages(canonical, list).catch((err) => {
           logger.debug({ err, jid: canonical }, 'media: history refresh failed')
@@ -1673,13 +1701,17 @@ async function main() {
   media.getSocket = () => sock
   media.onReady = async (jid, message) => {
     if (message.media?.kind === 'document') await saveDocumentToDownloads(message)
+    if (message.media?.kind === 'video' && !message.videoThumbnailPath)
+      message.videoThumbnailPath = await ensureVideoThumbnail(message)
     store.markDirty()
     bus.broadcast({ t: 'messageMedia', jid, id: message.id,
       mediaKind: message.media?.kind || 'image',
       mediaPath: message.media?.kind === 'video' ? message.videoPath || ''
         : message.media?.kind === 'audio' ? message.audioPath || ''
           : message.media?.kind === 'document' ? message.documentPath || '' : message.imagePath || '',
-      details: message.media?.kind === 'document'
+      details: message.media?.kind === 'video'
+        ? { videoThumbnailPath: message.videoThumbnailPath || '' }
+        : message.media?.kind === 'document'
         ? { fileName: message.fileName || safeDocumentName(message.media.fileName, message.id, message.media.mimetype) }
         : message.media?.kind === 'audio'
           ? { isVoiceNote: message.isVoiceNote || message.media.ptt === true,

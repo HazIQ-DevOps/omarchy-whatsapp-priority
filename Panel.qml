@@ -958,7 +958,7 @@ Panel {
     function onMessageMedia(jid, messageId, mediaPath, mediaKind, details) {
       if (!mediaPath || !root.messages.some(function(message) { return message.id === messageId })) return
       if (mediaKind === "video") {
-        root.patchMessage(messageId, { videoPath: mediaPath })
+        root.patchMessage(messageId, Object.assign({ videoPath: mediaPath }, details || {}))
         if (root.pendingMediaMessageId === messageId) {
           root.pendingMediaMessageId = ""
           root.statusLine = ""
@@ -2149,6 +2149,7 @@ Panel {
                       bubbleRow.hasVideo ? videoTile.width : 0,
                       bubbleRow.hasAudio ? audioTile.width : 0,
                       bubbleRow.hasDocument ? documentTile.width : 0,
+                      linkPreviewTile.visible ? linkPreviewTile.width : 0,
                       bodyLabel.visible ? bodyLabel.width : 0,
                       Math.min(metaLabel.implicitWidth, bubbleRow.maxInner))
 
@@ -2240,13 +2241,31 @@ Panel {
                       border.width: 1
                       border.color: root.secondaryForeground
 
-                      Text {
+                      Image {
+                        anchors.fill: parent
+                        anchors.margins: Style.space(2)
+                        visible: !!messageRow.modelData.videoThumbnailPath
+                        source: visible ? Qt.resolvedUrl("file://" + messageRow.modelData.videoThumbnailPath) : ""
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                        cache: true
+                      }
+
+                      Rectangle {
                         anchors.centerIn: parent
-                        text: root.pendingMediaMessageId === messageRow.modelData.id
-                          ? "Downloading video…" : "▶  Play video"
-                        color: root.foreground
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.body
+                        width: videoPlayLabel.implicitWidth + Style.space(18)
+                        height: videoPlayLabel.implicitHeight + Style.space(12)
+                        radius: Style.space(5)
+                        color: "#bb151515"
+                        Text {
+                          id: videoPlayLabel
+                          anchors.centerIn: parent
+                          text: root.pendingMediaMessageId === messageRow.modelData.id
+                            ? "Downloading video…" : "\uf04b  Play video"
+                          color: "#ffffff"
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.body
+                        }
                       }
 
                       MouseArea {
@@ -2318,32 +2337,48 @@ Panel {
                       id: documentTile
                       visible: bubbleRow.hasDocument
                       width: Math.min(bubbleRow.maxInner, Style.space(220))
-                      height: Style.space(60)
+                      height: Style.space(68)
                       radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(4)
                       color: Style.normalFillFor(root.foreground, Color.accent)
                       border.width: 1
                       border.color: root.secondaryForeground
 
-                      Column {
+                      Row {
                         anchors.fill: parent
                         anchors.margins: Style.space(7)
+                        spacing: Style.space(9)
                         Text {
-                          width: parent.width
-                          text: messageRow.modelData.fileName || "Document"
-                          textFormat: Text.PlainText
-                          color: root.foreground
+                          width: Style.space(34)
+                          anchors.verticalCenter: parent.verticalCenter
+                          horizontalAlignment: Text.AlignHCenter
+                          text: Model.documentKind(messageRow.modelData.fileName).icon
+                          color: root.bar ? root.bar.urgent : Color.accent
                           font.family: root.fontFamily
-                          font.pixelSize: Style.font.body
-                          elide: Text.ElideRight
+                          font.pixelSize: Style.font.title
                         }
-                        Text {
-                          width: parent.width
-                          text: messageRow.modelData.documentPath ? "✓ Saved to Downloads"
-                            : root.pendingMediaMessageId === messageRow.modelData.id
-                              ? "Downloading…" : "↓ Download document"
-                          color: root.secondaryForeground
-                          font.family: root.fontFamily
-                          font.pixelSize: Style.font.caption
+                        Column {
+                          width: parent.width - Style.space(43)
+                          anchors.verticalCenter: parent.verticalCenter
+                          Text {
+                            width: parent.width
+                            text: messageRow.modelData.fileName || "Document"
+                            textFormat: Text.PlainText
+                            color: root.foreground
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.body
+                            elide: Text.ElideMiddle
+                          }
+                          Text {
+                            width: parent.width
+                            text: Model.documentKind(messageRow.modelData.fileName).label + " · "
+                              + (messageRow.modelData.documentPath ? "Saved to Downloads"
+                                : root.pendingMediaMessageId === messageRow.modelData.id
+                                  ? "Downloading…" : "Download")
+                            color: root.secondaryForeground
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            elide: Text.ElideRight
+                          }
                         }
                       }
 
@@ -2351,6 +2386,68 @@ Panel {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
                         onClicked: root.downloadDocument(messageRow.modelData)
+                      }
+                    }
+
+                    Rectangle {
+                      id: linkPreviewTile
+                      visible: !!messageRow.modelData.linkPreview
+                      width: Math.min(bubbleRow.maxInner, Style.space(220))
+                      height: linkPreviewImage.visible ? Style.space(105) : Style.space(65)
+                      radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(4)
+                      color: Style.normalFillFor(root.foreground, Color.accent)
+                      border.width: 1
+                      border.color: root.secondaryForeground
+
+                      Image {
+                        id: linkPreviewImage
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        width: visible ? Style.space(70) : 0
+                        visible: !!messageRow.modelData.linkPreview
+                          && !!messageRow.modelData.linkPreview.thumbnailPath
+                        source: visible ? Qt.resolvedUrl("file://" + messageRow.modelData.linkPreview.thumbnailPath) : ""
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                      }
+                      Column {
+                        anchors.left: linkPreviewImage.right
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.margins: Style.space(7)
+                        Text {
+                          width: parent.width
+                          text: messageRow.modelData.linkPreview
+                            ? messageRow.modelData.linkPreview.title || "Link" : "Link"
+                          textFormat: Text.PlainText
+                          color: root.foreground
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.body
+                          font.bold: true
+                          elide: Text.ElideRight
+                        }
+                        Text {
+                          width: parent.width
+                          text: messageRow.modelData.linkPreview
+                            ? messageRow.modelData.linkPreview.description || "" : ""
+                          textFormat: Text.PlainText
+                          color: root.secondaryForeground
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          maximumLineCount: 2
+                          wrapMode: Text.Wrap
+                          elide: Text.ElideRight
+                        }
+                      }
+                      MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                          var link = messageRow.modelData.linkPreview
+                            ? messageRow.modelData.linkPreview.url || "" : ""
+                          if (link && !Qt.openUrlExternally(link)) linkLauncher.open(link)
+                        }
                       }
                     }
 
@@ -3094,9 +3191,11 @@ Panel {
                 anchors.fill: parent
                 anchors.margins: Style.space(4)
                 anchors.bottomMargin: Style.space(35)
-                visible: !!galleryTile.modelData.imagePath
+                visible: !!galleryTile.modelData.imagePath || !!galleryTile.modelData.videoThumbnailPath
                 source: galleryTile.modelData.imagePath
-                  ? Qt.resolvedUrl("file://" + galleryTile.modelData.imagePath) : ""
+                  ? Qt.resolvedUrl("file://" + galleryTile.modelData.imagePath)
+                  : galleryTile.modelData.videoThumbnailPath
+                    ? Qt.resolvedUrl("file://" + galleryTile.modelData.videoThumbnailPath) : ""
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
                 cache: true
@@ -3104,9 +3203,10 @@ Panel {
 
               Text {
                 anchors.centerIn: parent
-                visible: !galleryTile.modelData.imagePath
+                visible: !!galleryTile.modelData.videoPath || !galleryTile.modelData.imagePath
                 text: galleryTile.modelData.videoPath ? "\uf04b"
-                  : root.galleryTab === "documents" ? "\uf15c" : "\uf028"
+                  : root.galleryTab === "documents"
+                    ? Model.documentKind(galleryTile.modelData.fileName).icon : "\uf028"
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.title * 2
@@ -3123,7 +3223,8 @@ Panel {
                   anchors.fill: parent
                   anchors.margins: Style.space(5)
                   text: root.galleryTab === "documents"
-                    ? (galleryTile.modelData.fileName || "Document")
+                    ? Model.documentKind(galleryTile.modelData.fileName).label + " · "
+                      + (galleryTile.modelData.fileName || "Document")
                     : root.galleryTab === "audio" ? "Voice / audio"
                       : galleryTile.modelData.videoPath ? "Video" : "Photo"
                   textFormat: Text.PlainText

@@ -11,6 +11,11 @@ collapsed section. Archived chats are omitted from both views and the main searc
 Received videos and video notes can be played in the chat panel: click the video
 tile, or select its message and press **V**. Playback opens in a full-screen
 viewer; **Space** pauses, **Left/Right** seek five seconds, and **Esc** closes it.
+Video messages show WhatsApp's embedded poster when provided. For videos already
+downloaded, FFmpeg creates a local thumbnail for the chat and media grid; the
+preview itself does not download the full video. Documents show type-specific
+icons, including a clear archive icon. Text links sent from the plugin include
+a WhatsApp link preview when the destination exposes usable metadata.
 Videos download only when opened and are limited to 100 MB. Playback requires
 the `qt6-multimedia` package and codecs supported by your system.
 Older video entries saved by previous releases ask the linked phone for their
