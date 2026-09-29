@@ -23,9 +23,10 @@ the `qt6-multimedia` package and codecs supported by your system.
 Older video entries saved by previous releases ask the linked phone for their
 media details when opened; WhatsApp may no longer be able to return some of them.
 Voice notes and other audio play directly in the chat bubble: click the play
-control or select the message and press **P**. Documents have a download tile;
-click it or select the message and press **S** to save a copy in your Downloads
-folder. Audio and documents download only when opened, with 50 MB and 200 MB
+control or select the message and press **P**. Click the download icon on an
+attachment bubble, or select it and press **S**, to save a copy in Downloads.
+This works for MP3s and voice notes as well as images, videos, and documents.
+Audio and documents download only when opened or saved, with 50 MB and 200 MB
 limits respectively. Existing filenames are never overwritten.
 Voice notes, voice previews, and videos follow the system's current default
 audio output, including when a Bluetooth speaker is connected or disconnected.
@@ -33,6 +34,12 @@ To send a voice note, click the microphone in a chat or press **Ctrl+Shift+R**.
 Click Stop or press the shortcut again, play the preview, then click Send.
 The × button or **Escape** discards it. Recording stops automatically after
 three minutes; nothing is sent until you press Send.
+Copy a local file in your file manager and press **Ctrl+V** in the chat composer
+to attach it as a WhatsApp document. Check its filename, optionally type a
+caption, then press Send. A single regular file up to 200 MB is supported per
+paste; images copied as files still use the image preview when possible.
+**Escape** or × removes the staged file without sending it. Plain text paste
+continues to work normally.
 If the preview is silent, open Settings and choose a specific voice-note
 microphone. The plugin lists the available inputs and leaves your system-wide
 default unchanged. Your choice survives shell restarts and plugin updates.
@@ -143,8 +150,10 @@ systemctl --user edit omarchy-whatsapp     # Environment=OMARCHY_WHATSAPP_PAIRIN
 | Reply | Type, then `Enter` |
 | Add emoji | Use the smile button or `Ctrl+E` in a chat, then arrows and `Enter`; or type `:)`, `:D`, `LOL`, `;)`, `:(`, `:P`, or `<3` |
 | Send a copied image | In a chat, press `Ctrl+V`, check the preview, optionally add a caption, then press `Enter` or Send |
+| Send a copied file | Copy one local file in the file manager, press `Ctrl+V` in the chat, check the filename, optionally add a caption, then press `Enter` or Send |
 | Record a voice note | Click the microphone or press `Ctrl+Shift+R` to start and stop; preview it, then press Send. Use × or `Escape` to discard |
 | Select a message | Click its bubble, or press `Ctrl+Up` from the composer; use arrows to move between messages |
+| Save a received attachment | Click the download icon on its bubble, or select it and press `S`; it goes to Downloads |
 | Reply with a quote | Select a message, then press `R` or Reply; type and send |
 | Forward | Select a text, image, or sticker message, press `F`, search for a recipient, then click or press `Enter` |
 | React | Select a message and press `A`; choose an emoji with arrows and `Enter`. Press `0` to remove your reaction |
@@ -238,7 +247,7 @@ Nothing leaves your machine except traffic to WhatsApp itself. Incoming images
 and stickers up to 12 MB may be downloaded into the local media cache so they
 can appear inline. Videos and audio download on demand into the media cache;
 documents download on demand and are copied to your Downloads folder. A copied
-image or recorded voice note remains in a private runtime file until you send
+image, file, or recorded voice note remains in a private runtime file until you send
 or remove it. Voice notes are encoded as Ogg Opus and sent as WhatsApp
 push-to-talk audio.
 

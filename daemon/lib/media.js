@@ -94,6 +94,30 @@ export async function saveDocumentToDownloads(message, directory = defaultDownlo
   throw new Error('Could not find a free filename in Downloads')
 }
 
+export async function saveMediaToDownloads(message, directory = defaultDownloadDir()) {
+  if (!message?.media) throw new Error('Attachment is not available')
+  if (message.media.kind === 'document') return saveDocumentToDownloads(message, directory)
+  if (message.savedPath && existsSync(message.savedPath)) return message.savedPath
+  const source = existingMediaPath(message)
+  if (!source) throw new Error('Attachment has not been downloaded')
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const kind = message.media.kind === 'sticker' ? 'image' : message.media.kind
+  const name = `${kind}-${safeId(message.id)}.${extFor(message.media.mimetype)}`
+  const suffix = extname(name)
+  const stem = name.slice(0, name.length - suffix.length)
+  for (let i = 0; i < 1000; i++) {
+    const target = join(directory, i ? `${stem} (${i})${suffix}` : name)
+    try {
+      await copyFile(source, target, constants.COPYFILE_EXCL)
+      message.savedPath = target
+      return target
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err
+    }
+  }
+  throw new Error('Could not find a free filename in Downloads')
+}
+
 export function mediaPathFor(id, mimetype) {
   return join(mediaDir, `${safeId(id)}.${extFor(mimetype)}`)
 }

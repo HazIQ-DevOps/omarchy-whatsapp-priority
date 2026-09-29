@@ -19,9 +19,10 @@ import { Store, normalizeJid } from './lib/store.js'
 import { Notifier } from './lib/notify.js'
 import { Bus } from './lib/server.js'
 import { extractPreviewMedia, isGroupJid, isIgnorableChat, isSilent, messageText, messageType, prettyJid } from './lib/message.js'
-import { existingMediaPath, mediaPathFor, safeDocumentName, saveDocumentToDownloads, MediaCache } from './lib/media.js'
+import { existingMediaPath, mediaPathFor, safeDocumentName, saveDocumentToDownloads, saveMediaToDownloads, MediaCache } from './lib/media.js'
 import { cacheJpegThumbnail, ensureVideoThumbnail } from './lib/thumbnails.js'
 import { validateOutgoingImage } from './lib/outgoing-image.js'
+import { validateOutgoingFile } from './lib/outgoing-file.js'
 import { validateOutgoingVoice } from './lib/outgoing-voice.js'
 import { installSignalConsoleRedaction } from './lib/signal-console.js'
 import { contentForStoredMessage, quotedMessageFor, forwardMessageFor } from './lib/message-actions.js'
@@ -72,6 +73,7 @@ const retryCache = new RetryCache(join(stateDir, 'retry'))
 const notifier = new Notifier()
 const media = new MediaCache()
 const pendingMediaResends = new Map()
+const pendingMediaSaves = new Set()
 const bus = new Bus(socketPath)
 
 let sock = null
@@ -1340,20 +1342,26 @@ async function handleCommand(payload, reply) {
       const message = store.findMessage(canonical, String(payload.messageId))
       const kind = message?.type === 'videoMessage' || message?.type === 'ptvMessage' ? 'video'
         : message?.type === 'audioMessage' ? 'audio'
-          : message?.type === 'documentMessage' || message?.type === 'documentWithCaptionMessage' ? 'document' : ''
+          : message?.type === 'documentMessage' || message?.type === 'documentWithCaptionMessage' ? 'document'
+            : message?.type === 'imageMessage' ? 'image'
+              : message?.type === 'stickerMessage' ? 'sticker' : ''
       if (!message || message.deleted || !kind) throw new Error('Media is no longer available')
       if (message.media?.kind === kind) {
         if (!existingMediaPath(message) && (!sock || connection !== 'open'))
           throw new Error('WhatsApp is not connected')
-        media.enqueue(canonical, message, { requested: true })
+        if (payload.save === true) pendingMediaSaves.add(message.id)
+        try { media.enqueue(canonical, message, { requested: true }) }
+        catch (err) { pendingMediaSaves.delete(message.id); throw err }
       } else {
         if (!sock || connection !== 'open') throw new Error('WhatsApp is not connected')
         if (typeof sock.requestPlaceholderResend !== 'function' || !message.key?.id)
           throw new Error('Media can no longer be retrieved from WhatsApp')
+        if (payload.save === true) pendingMediaSaves.add(message.id)
         const old = pendingMediaResends.get(message.id)
         if (old) clearTimeout(old.timer)
         const timer = setTimeout(() => {
           pendingMediaResends.delete(message.id)
+          pendingMediaSaves.delete(message.id)
           bus.broadcast({ t: 'messageMediaError', jid: canonical, id: message.id,
             message: 'WhatsApp did not return this older attachment. Try again later.' })
         }, 20000)
@@ -1363,6 +1371,7 @@ async function handleCommand(payload, reply) {
         catch (err) {
           clearTimeout(timer)
           pendingMediaResends.delete(message.id)
+          pendingMediaSaves.delete(message.id)
           throw err
         }
       }
@@ -1423,6 +1432,40 @@ async function handleCommand(payload, reply) {
       recordSentMessage(rawJid, sent)
       try { unlinkSync(image.path) } catch { /* runtime file may already be gone */ }
       reply({ t: 'ack', for: 'sendImage', id, ok: true, jid: rawJid })
+      return
+    }
+
+    case 'sendFile': {
+      const rawJid = payload.jid
+      if (!rawJid) throw new Error('sendFile: jid required')
+      if (!sock || connection !== 'open') throw new Error('sendFile: not connected to WhatsApp')
+      const canonical = store.canonicalJid(rawJid) || rawJid
+      const file = validateOutgoingFile(payload.path, payload.mime, payload.name)
+      const caption = String(payload.caption || '').slice(0, 4096)
+      const options = {}
+      if (payload.quoted) {
+        const quoted = store.findMessage(canonical, String(payload.quoted))
+        if (!quoted || quoted.deleted) throw new Error('Quoted message is no longer available')
+        options.quoted = quotedMessageFor(quoted)
+        if (!options.quoted) throw new Error('Cannot quote this message')
+      }
+      const sent = await sendWhatsAppMessage(canonical, {
+        document: { url: file.path }, mimetype: file.mimetype,
+        fileName: file.fileName, caption
+      }, options)
+      if (!sent) throw new Error('sendFile: WhatsApp did not accept the file')
+      if (sent.key?.id) {
+        try {
+          const cached = mediaPathFor(sent.key.id, file.mimetype)
+          copyFileSync(file.path, cached)
+          chmodSync(cached, 0o600)
+        } catch (err) {
+          logger.warn({ err, id: sent.key.id }, 'sendFile: could not cache sent file')
+        }
+      }
+      recordSentMessage(rawJid, sent)
+      try { unlinkSync(file.path) } catch { /* runtime file may already be gone */ }
+      reply({ t: 'ack', for: 'sendFile', id, ok: true, jid: rawJid })
       return
     }
 
@@ -1701,6 +1744,16 @@ async function main() {
   media.getSocket = () => sock
   media.onReady = async (jid, message) => {
     if (message.media?.kind === 'document') await saveDocumentToDownloads(message)
+    if (pendingMediaSaves.delete(message.id)) {
+      try {
+        const path = await saveMediaToDownloads(message)
+        store.markDirty()
+        bus.broadcast({ t: 'mediaSaved', jid, id: message.id, path })
+      } catch (err) {
+        bus.broadcast({ t: 'messageMediaError', jid, id: message.id,
+          message: String(err?.message || 'Could not save attachment') })
+      }
+    }
     if (message.media?.kind === 'video' && !message.videoThumbnailPath)
       message.videoThumbnailPath = await ensureVideoThumbnail(message)
     store.markDirty()
@@ -1718,7 +1771,8 @@ async function main() {
             audioSeconds: message.audioSeconds || message.media.seconds || 0 } : {} })
   }
   media.onError = (jid, message, err) => {
-    if (['video', 'audio', 'document'].includes(message.media?.kind)) {
+    const wasSaving = pendingMediaSaves.delete(message.id)
+    if (wasSaving || ['video', 'audio', 'document'].includes(message.media?.kind)) {
       bus.broadcast({ t: 'messageMediaError', jid, id: message.id,
         message: String(err?.message || 'Could not download media') })
     }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Copy a Wayland clipboard image into a private runtime file for the composer.
+# Copy a Wayland clipboard image or local file into a private runtime file.
 # No message is sent until the user presses Send in the plugin.
 set -euo pipefail
 
@@ -22,6 +22,24 @@ case "${1:-capture}" in
     fi
 
     types="$(wl-paste --list-types 2>/dev/null || true)"
+    uri_type=""
+    for candidate in text/uri-list x-special/gnome-copied-files; do
+      if printf '%s\n' "$types" | grep -Fxq "$candidate"; then
+        uri_type="$candidate"
+        break
+      fi
+    done
+    if [[ -n $uri_type ]]; then
+      # File managers provide a URI list. Stage the file before showing it in
+      # the composer so the source can move without changing what gets sent.
+      source "$(dirname "$0")/_common.sh"
+      node="$(wa_node)"
+      if wl-paste --no-newline --type "$uri_type" | "$node" "$WA_DAEMON_DIR/clipboard-file.js"; then
+        exit 0
+      fi
+      printf '{"kind":"error","message":"Could not read the clipboard file"}\n'
+      exit 0
+    fi
     mime=""
     for candidate in image/png image/jpeg image/webp; do
       if printf '%s\n' "$types" | grep -Fxq "$candidate"; then

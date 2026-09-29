@@ -35,6 +35,7 @@ Panel {
   property string peekVideoPath: ""
   property string videoError: ""
   property string pendingMediaMessageId: ""
+  property string pendingSaveMessageId: ""
   property string activeAudioMessageId: ""
   property string audioPath: ""
   readonly property bool peekActive: peekImagePath.length > 0 || peekVideoPath.length > 0
@@ -43,6 +44,11 @@ Panel {
   property string pendingImageJid: ""
   property string pasteRequestJid: ""
   property bool imageSending: false
+  property string pendingFilePath: ""
+  property string pendingFileName: ""
+  property string pendingFileMime: ""
+  property string pendingFileJid: ""
+  property bool fileSending: false
   property string voiceState: "idle" // preparing, recording, stopping, converting, ready, sending
   property string voiceRecordPath: ""
   property string pendingVoicePath: ""
@@ -376,6 +382,17 @@ Panel {
     }
   }
 
+  function saveAttachment(message) {
+    if (!message || !message.id || !root.client || !root.activeJid) return
+    if (root.pendingSaveMessageId === message.id) return
+    if (!root.client.saveMedia(root.activeJid, message.id)) {
+      root.statusLine = "WhatsApp is not connected"
+      return
+    }
+    root.pendingSaveMessageId = message.id
+    root.statusLine = "Saving attachment to Downloads…"
+  }
+
   function playbackTime(milliseconds) {
     var seconds = Math.floor(Math.max(0, milliseconds || 0) / 1000)
     var remainder = seconds % 60
@@ -596,7 +613,7 @@ Panel {
 
   function beginEditMessage(message) {
     if (!root.canEditMessage(message)) return
-    if (root.editPending || root.pendingImagePath || root.pendingVoicePath || root.voiceState !== "idle"
+    if (root.editPending || root.pendingImagePath || root.pendingFilePath || root.pendingVoicePath || root.voiceState !== "idle"
         || (composer.text.length > 0 && root.editingMessageId !== message.id)) {
       root.statusLine = "Send or clear your current draft before editing"
       return
@@ -632,8 +649,9 @@ Panel {
     if (root.voiceState !== "idle" && root.voiceState !== "ready") return
     var text = Model.expandEmoticons(composer.text)
     var hasPendingImage = root.pendingImagePath.length > 0 && root.pendingImageJid === root.activeJid
+    var hasPendingFile = root.pendingFilePath.length > 0 && root.pendingFileJid === root.activeJid
     var hasPendingVoice = root.pendingVoicePath.length > 0 && root.pendingVoiceJid === root.activeJid
-    if ((!text || !text.trim().length) && !hasPendingImage && !hasPendingVoice) return
+    if ((!text || !text.trim().length) && !hasPendingImage && !hasPendingFile && !hasPendingVoice) return
     if (!root.client || !root.client.ready) {
       root.statusLine = "Not connected to WhatsApp"
       return
@@ -655,6 +673,15 @@ Panel {
       } else {
         root.statusLine = "Could not send the image"
       }
+      return
+    }
+    if (hasPendingFile) {
+      if (root.fileSending) return
+      if (root.client.sendFile(root.activeJid, root.pendingFilePath, root.pendingFileMime,
+        root.pendingFileName, text, root.quotedMessageId)) {
+        root.fileSending = true
+        root.statusLine = "Sending file…"
+      } else root.statusLine = "Could not send the file"
       return
     }
     if (hasPendingVoice) {
@@ -681,6 +708,17 @@ Panel {
     root.pendingImageMime = ""
     root.pendingImageJid = ""
     root.imageSending = false
+    if (deleteFile && path)
+      Quickshell.execDetached([root.pluginDir + "/bin/omarchy-whatsapp-paste-image", "delete", path])
+  }
+
+  function clearPendingFile(deleteFile) {
+    var path = root.pendingFilePath
+    root.pendingFilePath = ""
+    root.pendingFileName = ""
+    root.pendingFileMime = ""
+    root.pendingFileJid = ""
+    root.fileSending = false
     if (deleteFile && path)
       Quickshell.execDetached([root.pluginDir + "/bin/omarchy-whatsapp-paste-image", "delete", path])
   }
@@ -716,8 +754,8 @@ Panel {
     }
     if (!root.linked || !root.client || !root.client.ready || root.view !== "chat") return
     if (root.voiceState !== "idle" && root.voiceState !== "ready") return
-    if (root.pendingImagePath || root.editingMessageId || clipboardCapture.running) {
-      root.statusLine = "Finish the image or edit before recording"
+    if (root.pendingImagePath || root.pendingFilePath || root.editingMessageId || clipboardCapture.running) {
+      root.statusLine = "Finish the attachment or edit before recording"
       return
     }
     if (root.voiceState === "ready") root.discardVoice()
@@ -780,9 +818,9 @@ Panel {
   }
 
   function pasteImageOrText() {
-    if (clipboardCapture.running || root.imageSending) return
+    if (clipboardCapture.running || root.imageSending || root.fileSending) return
     if (root.voiceState !== "idle") {
-      root.statusLine = "Discard or send the voice note before pasting an image"
+      root.statusLine = "Discard or send the voice note before pasting a file"
       return
     }
     root.pasteRequestJid = root.activeJid
@@ -798,15 +836,24 @@ Panel {
       return
     }
     if (result.kind === "error") {
-      root.statusLine = result.message || "Could not paste the image"
+      root.statusLine = result.message || "Could not paste the attachment"
       return
     }
-    if (result.kind !== "image" || !result.path || !result.mime) return
+    if ((result.kind !== "image" && result.kind !== "file") || !result.path || !result.mime) return
     if (root.view !== "chat" || root.activeJid !== root.pasteRequestJid) {
       Quickshell.execDetached([root.pluginDir + "/bin/omarchy-whatsapp-paste-image", "delete", result.path])
       return
     }
     root.clearPendingImage(true)
+    root.clearPendingFile(true)
+    if (result.kind === "file") {
+      root.pendingFilePath = result.path
+      root.pendingFileName = result.name || "Document"
+      root.pendingFileMime = result.mime
+      root.pendingFileJid = root.activeJid
+      root.statusLine = "File ready to send"
+      return
+    }
     root.pendingImagePath = result.path
     root.pendingImageMime = result.mime
     root.pendingImageJid = root.activeJid
@@ -821,6 +868,8 @@ Panel {
     root.galleryOpen = false
     if (root.pendingImagePath && root.pendingImageJid !== root.activeJid && !root.imageSending)
       root.clearPendingImage(true)
+    if (root.pendingFilePath && root.pendingFileJid !== root.activeJid && !root.fileSending)
+      root.clearPendingFile(true)
     if (root.voiceState !== "idle" && root.pendingVoiceJid !== root.activeJid)
       root.discardVoice()
   }
@@ -832,10 +881,13 @@ Panel {
     if (root.view !== "chat") root.pendingCopyImageId = ""
     if (root.view !== "chat" && root.pendingImagePath && !root.imageSending)
       root.clearPendingImage(true)
+    if (root.view !== "chat" && root.pendingFilePath && !root.fileSending)
+      root.clearPendingFile(true)
     if (root.view !== "chat" && root.voiceState !== "idle") root.discardVoice()
   }
   Component.onDestruction: {
     if (root.pendingImagePath && !root.imageSending) root.clearPendingImage(true)
+    if (root.pendingFilePath && !root.fileSending) root.clearPendingFile(true)
     if (root.voiceState !== "idle" && root.voiceState !== "sending") root.discardVoice()
   }
 
@@ -992,6 +1044,11 @@ Panel {
     }
 
     function onMessageMediaError(jid, messageId, message) {
+      if (root.pendingSaveMessageId === messageId) {
+        root.pendingSaveMessageId = ""
+        root.statusLine = message || "Could not save attachment"
+        return
+      }
       if (root.pendingCopyImageId === messageId) {
         root.pendingCopyImageId = ""
         root.statusLine = message || "Could not download image"
@@ -1000,6 +1057,11 @@ Panel {
       if (root.pendingMediaMessageId !== messageId) return
       root.pendingMediaMessageId = ""
       root.statusLine = message || "Could not download media"
+    }
+
+    function onMediaSaved(jid, messageId, path) {
+      if (root.pendingSaveMessageId === messageId) root.pendingSaveMessageId = ""
+      if (jid === root.activeJid && path) root.statusLine = "Saved to " + path
     }
 
     function onMessagePatched(jid, messageId, fields) {
@@ -1014,6 +1076,16 @@ Panel {
     function onImageSendAcknowledged(jid) {
       if (jid !== root.pendingImageJid || !root.imageSending) return
       root.clearPendingImage(false)
+      composer.clear()
+      root.quotedMessageId = ""
+      root.statusLine = ""
+      typingTimer.stop()
+      root.client.setTyping(jid, "paused")
+    }
+
+    function onFileSendAcknowledged(jid) {
+      if (jid !== root.pendingFileJid || !root.fileSending) return
+      root.clearPendingFile(false)
       composer.clear()
       root.quotedMessageId = ""
       root.statusLine = ""
@@ -1048,12 +1120,18 @@ Panel {
       if (command === "send") root.statusLine = message
       if (command === "downloadMedia") {
         root.pendingMediaMessageId = ""
+        root.pendingSaveMessageId = ""
         root.statusLine = message || "Could not download media"
       }
       if (command === "sendImage") {
         root.imageSending = false
         root.statusLine = message || "Could not send the image"
         if (root.pendingImageJid !== root.activeJid) root.clearPendingImage(true)
+      }
+      if (command === "sendFile") {
+        root.fileSending = false
+        root.statusLine = message || "Could not send the file"
+        if (root.pendingFileJid !== root.activeJid) root.clearPendingFile(true)
       }
       if (command === "sendVoice") {
         root.voiceState = "ready"
@@ -1250,7 +1328,7 @@ Panel {
       onStreamFinished: root.handleClipboardCapture(text)
     }
     onExited: function (exitCode) {
-      if (exitCode !== 0) root.statusLine = "Could not read the clipboard image"
+      if (exitCode !== 0) root.statusLine = "Could not read the clipboard"
     }
   }
 
@@ -1335,9 +1413,10 @@ Panel {
             if (selectedAudio && selectedAudio.type === "audioMessage") root.toggleAudio(selectedAudio)
           }
           else if (text === "s" || text === "S") {
-            var selectedDocument = root.messages.find(function(message) { return message.id === root.selectedMessageId })
-            if (selectedDocument && (selectedDocument.type === "documentMessage"
-              || selectedDocument.type === "documentWithCaptionMessage")) root.downloadDocument(selectedDocument)
+            var selectedAttachment = root.messages.find(function(message) { return message.id === root.selectedMessageId })
+            if (selectedAttachment && ["imageMessage", "stickerMessage", "videoMessage", "ptvMessage",
+              "audioMessage", "documentMessage", "documentWithCaptionMessage"].indexOf(selectedAttachment.type) !== -1)
+              root.saveAttachment(selectedAttachment)
           }
           else if (text === "f" || text === "F") root.startForward()
           else if (text === "c" || text === "C") root.copyMessage(root.selectedMessage())
@@ -2158,8 +2237,9 @@ Panel {
                     y: bubbleRow.pad / 2
                     spacing: Style.space(1)
                     width: Math.max(
-                      editMessageButton.visible
-                        ? editMessageButton.width + copyMessageButton.width + Style.space(4) : 0,
+                      (copyMessageButton.visible ? copyMessageButton.width + Style.space(4) : 0)
+                        + (editMessageButton.visible ? editMessageButton.width + Style.space(4) : 0)
+                        + (saveMessageButton.visible ? saveMessageButton.width + Style.space(4) : 0),
                       bubbleRow.showSender ? senderLabel.width : 0,
                       quoteLabel.visible ? quoteLabel.width : 0,
                       forwardedLabel.visible ? forwardedLabel.width : 0,
@@ -2172,9 +2252,9 @@ Panel {
                       Math.min(metaLabel.implicitWidth, bubbleRow.maxInner))
 
                     Item {
-                      visible: copyMessageButton.visible || editMessageButton.visible
+                      visible: copyMessageButton.visible || editMessageButton.visible || saveMessageButton.visible
                       width: parent.width
-                      height: Math.max(copyMessageButton.height, editMessageButton.height)
+                      height: Math.max(copyMessageButton.height, editMessageButton.height, saveMessageButton.height)
                     }
 
                     Text {
@@ -2575,6 +2655,25 @@ Panel {
                   z: 2
                   onClicked: root.beginEditMessage(messageRow.modelData)
                 }
+
+                PanelActionButton {
+                  id: saveMessageButton
+                  visible: (messageRow.modelData.type === "imageMessage"
+                    || messageRow.modelData.type === "stickerMessage" || bubbleRow.hasImage || bubbleRow.hasVideo
+                    || bubbleRow.hasAudio || bubbleRow.hasDocument) && !messageRow.modelData.deleted
+                  anchors.right: editMessageButton.visible ? editMessageButton.left : copyMessageButton.visible ? copyMessageButton.left : bubble.right
+                  anchors.rightMargin: Style.space(4)
+                  anchors.top: bubble.top
+                  anchors.topMargin: bubbleRow.pad / 2
+                  size: Style.space(17)
+                  fontSize: Style.font.caption
+                  iconText: "\uf019"
+                  tooltipText: "Save attachment to Downloads (S when selected)"
+                  foreground: root.secondaryForeground
+                  fontFamily: root.fontFamily
+                  z: 2
+                  onClicked: root.saveAttachment(messageRow.modelData)
+                }
               }
             }
           }
@@ -2653,7 +2752,7 @@ Panel {
           Text {
             width: parent.width
             visible: root.selectedMessageId.length > 0 && !root.chatSearchOpen
-            text: "R reply · F forward · C copy · A react · 0 unreact · E edit · G gallery · D delete me · X delete all · ↑/↓ select · Esc cancel"
+            text: "R reply · F forward · C copy · S save file · A react · 0 unreact · E edit · G gallery · D delete me · X delete all · ↑/↓ select · Esc cancel"
             textFormat: Text.PlainText
             color: root.secondaryForeground
             font.family: root.fontFamily
@@ -2761,6 +2860,50 @@ Panel {
             }
 
             Rectangle {
+              id: pendingFilePreview
+              width: parent.width
+              visible: root.pendingFilePath.length > 0 && root.pendingFileJid === root.activeJid
+              height: visible ? Style.space(52) : 0
+              radius: Style.cornerRadius
+              color: Style.normalFillFor(root.foreground, Color.accent)
+
+              Text {
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(10)
+                anchors.verticalCenter: parent.verticalCenter
+                text: Model.documentKind(root.pendingFileName).icon
+                color: root.bar ? root.bar.urgent : Color.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+              }
+              Text {
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(42)
+                anchors.right: cancelFile.left
+                anchors.rightMargin: Style.space(8)
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.fileSending ? "Sending " + root.pendingFileName + "…" : root.pendingFileName
+                textFormat: Text.PlainText
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideMiddle
+              }
+              PanelActionButton {
+                id: cancelFile
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(6)
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "\uf00d"
+                tooltipText: "Remove file"
+                enabled: !root.fileSending
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.clearPendingFile(true)
+              }
+            }
+
+            Rectangle {
               id: pendingVoicePreview
               width: parent.width
               visible: root.voiceState !== "idle" && root.pendingVoiceJid === root.activeJid
@@ -2828,9 +2971,9 @@ Panel {
                 foreground: root.foreground
                 accent: root.bar ? root.bar.urgent : Color.accent
                 placeholderText: root.linked
-                  ? (root.editingMessageId ? "Edit message…" : pendingImagePreview.visible ? "Caption (optional)\u2026" : "Reply\u2026")
+                  ? (root.editingMessageId ? "Edit message…" : pendingImagePreview.visible || pendingFilePreview.visible ? "Caption (optional)\u2026" : "Reply\u2026")
                   : "Not connected"
-                enabled: root.linked && !root.imageSending
+                enabled: root.linked && !root.imageSending && !root.fileSending
                 readOnly: root.editPending || (root.voiceState !== "idle" && root.voiceState !== "ready")
                 onAccepted: root.sendReply()
                 onTextEdited: root.expandComposerShorthand()
@@ -2872,6 +3015,7 @@ Panel {
                     composer.text = ""
                   }
                   else if (pendingImagePreview.visible) root.clearPendingImage(true)
+                  else if (pendingFilePreview.visible) root.clearPendingFile(true)
                   else if (pendingVoicePreview.visible) root.discardVoice()
                   else if (composer.text.length > 0) composer.text = ""
                   else root.back()
@@ -2886,7 +3030,7 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
                 iconText: "\uf118"
                 tooltipText: "Choose an emoji"
-                enabled: root.linked && !root.imageSending
+                enabled: root.linked && !root.imageSending && !root.fileSending
                 focusable: true
                 foreground: root.foreground
                 fontFamily: root.fontFamily
@@ -2901,7 +3045,7 @@ Panel {
                 iconText: root.voiceState === "recording" ? "\uf04d" : "\uf130"
                 tooltipText: root.voiceState === "recording" ? "Stop recording (Ctrl+Shift+R)"
                   : "Record voice note (Ctrl+Shift+R)"
-                enabled: (root.linked || root.voiceState === "recording") && !root.imageSending
+                enabled: (root.linked || root.voiceState === "recording") && !root.imageSending && !root.fileSending
                   && !root.editingMessageId
                   && (root.voiceState === "idle" || root.voiceState === "ready" || root.voiceState === "recording")
                 focusable: true
@@ -2916,9 +3060,10 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
                 iconText: "\uf1d8"
                 tooltipText: root.editingMessageId ? "Save edit" : pendingImagePreview.visible ? "Send image"
+                  : pendingFilePreview.visible ? "Send file"
                   : root.voiceState === "ready" ? "Send voice note" : "Send"
-                enabled: root.linked && !root.imageSending && !root.editPending
-                  && (composer.text.trim().length > 0 || pendingImagePreview.visible || root.voiceState === "ready")
+                enabled: root.linked && !root.imageSending && !root.fileSending && !root.editPending
+                  && (composer.text.trim().length > 0 || pendingImagePreview.visible || pendingFilePreview.visible || root.voiceState === "ready")
                   && (root.voiceState === "idle" || root.voiceState === "ready")
                 foreground: root.foreground
                 fontFamily: root.fontFamily

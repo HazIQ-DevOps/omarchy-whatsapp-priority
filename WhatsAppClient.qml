@@ -66,7 +66,9 @@ Item {
   signal pairCodeReceived(string code)
   signal sendAcknowledged(string jid)
   signal imageSendAcknowledged(string jid)
+  signal fileSendAcknowledged(string jid)
   signal voiceSendAcknowledged(string jid)
+  signal mediaSaved(string jid, string messageId, string path)
   signal actionAcknowledged(string action, string jid)
 
   function request(payload) {
@@ -90,6 +92,7 @@ Item {
   function requestChats(limit) { request({ t: "chats", limit: limit || 60 }) }
   function loadMessages(jid, limit) { request({ t: "messages", jid: jid, limit: limit || 200 }) }
   function downloadMedia(jid, messageId) { return request({ t: "downloadMedia", jid: jid, messageId: messageId }) }
+  function saveMedia(jid, messageId) { return request({ t: "downloadMedia", jid: jid, messageId: messageId, save: true }) }
   function refreshInbox(jid, chatLimit, messageLimit) {
     var payload = { t: "refresh", limit: chatLimit || 60 }
     if (jid) {
@@ -140,6 +143,13 @@ Item {
   function sendImage(jid, path, mime, caption, quotedId) {
     if (!jid || !path || !mime) return false
     var payload = { t: "sendImage", jid: jid, path: path, mime: mime, caption: caption || "" }
+    if (quotedId) payload.quoted = quotedId
+    return request(payload)
+  }
+
+  function sendFile(jid, path, mime, name, caption, quotedId) {
+    if (!jid || !path || !name) return false
+    var payload = { t: "sendFile", jid: jid, path: path, mime: mime, name: name, caption: caption || "" }
     if (quotedId) payload.quoted = quotedId
     return request(payload)
   }
@@ -271,6 +281,10 @@ Item {
         root.messageMedia(frame.jid || "", frame.id || "", frame.mediaPath || frame.imagePath || "", frame.mediaKind || "image", frame.details || {})
         break
 
+      case "mediaSaved":
+        root.mediaSaved(frame.jid || "", frame.id || "", frame.path || "")
+        break
+
       case "messageMediaError":
         root.messageMediaError(frame.jid || "", frame.id || "", frame.message || "Could not download media")
         break
@@ -293,6 +307,7 @@ Item {
 
       case "ack":
         if (frame.for === "sendImage" && frame.jid) root.imageSendAcknowledged(frame.jid)
+        if (frame.for === "sendFile" && frame.jid) root.fileSendAcknowledged(frame.jid)
         if (frame.for === "sendVoice" && frame.jid) root.voiceSendAcknowledged(frame.jid)
         if (frame.for) root.actionAcknowledged(frame.for, frame.jid || "")
         if (frame.jid) root.sendAcknowledged(frame.jid)

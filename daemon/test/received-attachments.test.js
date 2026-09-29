@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { extractPreviewMedia } from '../lib/message.js'
 import {
   MAX_AUDIO_BYTES, MAX_DOCUMENT_BYTES, mediaByteLimit, mediaPathFor,
-  MediaCache, safeDocumentName, saveDocumentToDownloads
+  MediaCache, safeDocumentName, saveDocumentToDownloads, saveMediaToDownloads
 } from '../lib/media.js'
 
 const mediaKey = Buffer.alloc(32, 8)
@@ -67,6 +67,22 @@ test('document saving strips path traversal and never overwrites an existing fil
     assert.equal(readFileSync(first.documentPath, 'utf8'), 'document bytes')
     assert.equal(readFileSync(second.documentPath, 'utf8'), 'document bytes')
     assert.equal(await saveDocumentToDownloads(first, downloads), first.documentPath)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('received MP3 audio can be copied from playback cache to Downloads', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'omarchy-whatsapp-audio-'))
+  try {
+    const audioPath = join(directory, 'cache.mp3')
+    const downloads = join(directory, 'Downloads')
+    writeFileSync(audioPath, 'audio bytes')
+    const message = { id: 'mp3-123', audioPath, media: { kind: 'audio', mimetype: 'audio/mpeg' } }
+    const saved = await saveMediaToDownloads(message, downloads)
+    assert.equal(saved, join(downloads, 'audio-mp3-123.mp3'))
+    assert.equal(readFileSync(saved, 'utf8'), 'audio bytes')
+    assert.equal(await saveMediaToDownloads(message, downloads), saved)
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
