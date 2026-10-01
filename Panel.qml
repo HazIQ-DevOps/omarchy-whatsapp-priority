@@ -28,6 +28,10 @@ Panel {
   property var messages: []
   property int cursorIndex: 0
   property string statusLine: ""
+  property bool callDialOpen: false
+  readonly property var callState: client ? client.callState : ({ phase: "idle", error: "", name: "" })
+  readonly property bool callBusy: client ? client.callBusy : false
+  property double callClockMs: Date.now()
   property bool pinToLatest: true
   property bool logoutConfirmOpen: false
   property bool refreshing: false
@@ -744,7 +748,40 @@ Panel {
     root.voiceSeconds = 0
   }
 
+  function openCallDial() {
+    root.callDialOpen = !root.callDialOpen
+    if (root.callDialOpen) Qt.callLater(function() { callPhoneField.forceActiveFocus() })
+  }
+
+  function callContact() {
+    if (!root.client || !root.client.ready || root.callBusy) return
+    var chat = root.view === "chat" ? root.activeChat : root.chatAt(root.cursorIndex)
+    if (!chat || chat.isGroup) {
+      root.statusLine = "Select an individual contact to call"
+      return
+    }
+    root.callDialOpen = false
+    root.stopAudio()
+    root.client.startCall(chat.jid)
+  }
+
+  function dialNumber() {
+    if (!root.client || !root.client.ready || root.callBusy || !callPhoneField.text.trim()) return
+    root.stopAudio()
+    root.client.dialCall(callPhoneField.text)
+    root.callDialOpen = false
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  Timer {
+    interval: 1000
+    repeat: true
+    running: root.callBusy
+    onTriggered: root.callClockMs = Date.now()
+  }
+
   function toggleVoiceRecording() {
+    if (root.callBusy) { root.statusLine = "End the call before recording a voice note"; return }
     if (root.voiceState === "recording") {
       root.voiceState = "stopping"
       voiceClock.stop()
@@ -1117,7 +1154,7 @@ Panel {
     }
 
     function onCommandFailed(command, message) {
-      if (command === "send") root.statusLine = message
+      if (["send", "startCall", "hangupCall", "muteCall", "answerCall", "declineCall"].indexOf(command) !== -1) root.statusLine = message
       if (command === "downloadMedia") {
         root.pendingMediaMessageId = ""
         root.pendingSaveMessageId = ""
@@ -1320,6 +1357,11 @@ Panel {
     onTriggered: root.copiedMessageId = ""
   }
 
+  onCallBusyChanged: {
+    if (!root.callBusy && root.opened && root.view === "chat")
+      Qt.callLater(function () { composer.forceActiveFocus() })
+  }
+
   Process {
     id: clipboardCapture
     command: [root.pluginDir + "/bin/omarchy-whatsapp-paste-image", "capture"]
@@ -1380,12 +1422,23 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+
+  Shortcut {
+    sequences: ["Ctrl+V", "Ctrl+Shift+V", "Shift+Insert"]
+    enabled: root.opened && root.view === "chat" && root.linked
+      && !root.callDialOpen && !root.chatSearchOpen
+      && !root.logoutConfirmOpen && !root.deleteConfirmOpen
+      && !root.peekActive && !root.galleryOpen
+    onActivated: root.pasteImageOrText()
+  }
+
       // Composer, logout confirm, and image peek own keys while they are up.
-      blocked: composer.activeFocus || emojiButton.activeFocus || emojiGrid.activeFocus
+      blocked: callPhoneField.activeFocus || composer.activeFocus || emojiButton.activeFocus || emojiGrid.activeFocus
         || priorityField.activeFocus || searchField.activeFocus || chatSearchField.activeFocus
         || root.logoutConfirmOpen || root.deleteConfirmOpen || root.peekActive || root.galleryOpen
 
       onCloseRequested: {
+        if (root.callDialOpen) { root.callDialOpen = false; return }
         if (root.peekActive) root.closePeek()
         else if (root.logoutConfirmOpen) root.cancelLogout()
         else if (root.deleteConfirmOpen) root.deleteConfirmOpen = false
@@ -1523,6 +1576,28 @@ Panel {
             spacing: Style.space(2)
 
             PanelActionButton {
+              visible: !root.showLogin && (root.view === "chats" || (root.view === "chat" && root.activeChat && !root.activeChat.isGroup))
+              iconText: "\uf095"
+              tooltipText: root.view === "chat" ? "Call this contact" : "Call selected contact"
+              focusable: true
+              enabled: root.client && root.client.ready && !root.callBusy && root.voiceState !== "recording"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.callContact()
+            }
+
+            PanelActionButton {
+              visible: !root.showLogin && root.view === "chats"
+              iconText: "#"
+              tooltipText: "Dial another phone number"
+              focusable: true
+              enabled: root.client && root.client.ready && !root.callBusy
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.openCallDial()
+            }
+
+            PanelActionButton {
               visible: root.view === "chat"
               iconText: "\uf002"
               tooltipText: "Search this conversation (/)"
@@ -1584,6 +1659,132 @@ Panel {
               hoverColor: root.bar ? root.bar.urgent : Color.urgent
               fontFamily: root.fontFamily
               onClicked: root.requestLogout()
+            }
+          }
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(6)
+          visible: root.callDialOpen
+          Text {
+            text: "Call a phone number"
+            color: root.foreground
+            font.family: root.fontFamily
+            font.bold: true
+          }
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+            TextField {
+              id: callPhoneField
+              width: parent.width - dialCallButton.width - Style.space(8)
+              foreground: root.foreground
+              placeholderText: "+27… (include country code)"
+              enabled: !root.callBusy
+              inputMethodHints: Qt.ImhDialableCharactersOnly
+              onAccepted: root.dialNumber()
+              Keys.onEscapePressed: {
+                root.callDialOpen = false
+                keyCatcher.forceActiveFocus()
+              }
+            }
+            PanelActionButton {
+              id: dialCallButton
+              iconText: "\uf095"
+              tooltipText: "Call this number"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              enabled: root.client && root.client.ready && !root.callBusy && callPhoneField.text.trim().length > 0
+              focusable: true
+              onClicked: root.dialNumber()
+            }
+          }
+          Text {
+            width: parent.width
+            text: "Voice calls · use headphones · microphone follows Settings"
+            color: root.secondaryForeground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+        }
+
+        Rectangle {
+          width: parent.width
+          visible: root.callBusy || !!root.callState.error
+          implicitHeight: callBanner.implicitHeight + Style.space(14)
+          radius: Style.cornerRadius
+          color: Style.normalFillFor(root.foreground, Color.accent)
+          border.width: 1
+          border.color: root.callState.error ? Color.urgent : "#25D366"
+          Column {
+            id: callBanner
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.margins: Style.space(7)
+            spacing: Style.space(5)
+            Text {
+              width: parent.width
+              text: {
+                if (root.callState.error) return root.callState.error
+                var phase = root.callState.phase
+                var label = phase === "incoming" ? "Incoming voice call"
+                  : phase === "answering" ? "Answering"
+                  : phase === "initializing" ? "Starting voice call"
+                  : phase === "dialing" ? "Calling"
+                  : phase === "ringing" ? "Ringing"
+                  : phase === "active" ? "On call" : "Ending call"
+                var duration = root.callState.startedAt ? " · " + root.playbackTime(root.callClockMs - root.callState.startedAt) : ""
+                return label + " · " + root.callState.name + duration + (root.callState.muted ? " · muted" : "")
+              }
+              textFormat: Text.PlainText
+              color: root.callState.error ? Color.urgent : root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+            Row {
+              spacing: Style.space(8)
+              Button {
+                visible: root.callState.phase === "incoming"
+                text: "Answer"
+                enabled: root.voiceState === "idle" || root.voiceState === "ready"
+                onClicked: { root.stopAudio(); root.client.answerCall() }
+              }
+              Button {
+                visible: root.callState.phase === "incoming"
+                text: "Decline"
+                onClicked: root.client.declineCall()
+              }
+              PanelActionButton {
+                visible: root.callBusy && root.callState.phase !== "incoming"
+                iconText: root.callState.muted ? "\uf131" : "\uf130"
+                tooltipText: root.callState.muted ? "Unmute microphone" : "Mute microphone"
+                enabled: root.callState.phase === "active" || root.callState.phase === "ringing"
+                focusable: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.client.muteCall(!root.callState.muted)
+              }
+              PanelActionButton {
+                visible: root.callBusy && root.callState.phase !== "incoming"
+                iconText: "\uf095"
+                tooltipText: "Hang up"
+                foreground: Color.urgent
+                fontFamily: root.fontFamily
+                focusable: true
+                onClicked: root.client.hangupCall()
+              }
+              PanelActionButton {
+                visible: !root.callBusy && !!root.callState.error
+                iconText: "\uf00d"
+                tooltipText: "Dismiss call error"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.client.dismissCallError()
+              }
             }
           }
         }
@@ -2982,7 +3183,18 @@ Panel {
                   if (!typingTimer.running) root.client.setTyping(root.activeJid, "composing")
                   typingTimer.restart()
                 }
+                Keys.priority: Keys.BeforeItem
+                Keys.onShortcutOverride: function (event) {
+                  if ((event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier))
+                      || (event.key === Qt.Key_Insert && (event.modifiers & Qt.ShiftModifier))) event.accepted = true
+                }
                 Keys.onPressed: function (event) {
+                  if ((event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier))
+                      || (event.key === Qt.Key_Insert && (event.modifiers & Qt.ShiftModifier))) {
+                    event.accepted = true
+                    root.pasteImageOrText()
+                    return
+                  }
                   if (event.key === Qt.Key_F && (event.modifiers & Qt.ControlModifier)) {
                     event.accepted = true
                     root.focusSearch()
@@ -2993,10 +3205,6 @@ Panel {
                       && (event.modifiers & Qt.ShiftModifier)) {
                     event.accepted = true
                     root.toggleVoiceRecording()
-                  } else if (event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier)
-                      && !(event.modifiers & Qt.ShiftModifier)) {
-                    event.accepted = true
-                    root.pasteImageOrText()
                   } else if (event.key === Qt.Key_E && (event.modifiers & Qt.ControlModifier)) {
                     event.accepted = true
                     root.toggleEmojiPicker()

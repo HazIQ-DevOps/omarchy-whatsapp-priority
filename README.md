@@ -4,7 +4,7 @@
 
 WhatsApp in the Omarchy Quattro bar: unread badge, desktop notifications you can
 click, chat actions without leaving the bar, and one keystroke to the full
-WhatsApp Web client when you need calls, search, or unsupported media.
+WhatsApp Web client when you need incoming calls, search, or unsupported media.
 
 The hover preview and main chat list put individuals first and keep groups in a
 collapsed section. Archived chats are omitted from both views and the main search.
@@ -337,3 +337,19 @@ omarchy-whatsapp uninstall
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Experimental voice calls
+
+Click the phone icon in an individual chat to call that contact, or highlight a contact in the chat list and click the phone icon. The number is resolved automatically. The **#** button in the chat list optionally dials another international number.
+
+Incoming one-to-one voice calls open the panel with caller details and **Answer** / **Decline** controls, plus a desktop notification and sound. Answer uses the microphone selected in Settings. The engine initializes automatically when WhatsApp connects. Calls answered on another device are dismissed.
+
+Calling shares the existing linked-device session: no second QR scan, account, or service is required. The call strip stays available when you switch chats and provides mute, hang up, and elapsed time. Closing the panel keeps an active call running. The bar displays a phone indicator during calls.
+
+Incoming ringing expires after 60 seconds; accepted and outgoing calls have a ten-minute limit. Speaker audio uses the system default PipeWire output. Microphone audio is streamed without recording it to disk. Voice-note recording is unavailable during calls. Group and video calling are unsupported.
+
+Calling requires `pipewire-audio` and the pinned `@roamhq/wrtc` native dependency, installed by normal daemon setup. The local user tested outgoing calls, incoming pickup, muting, hanging up, and declining on this Omarchy installation. Other installations still need compatibility testing.
+
+The wrapper is derived from [SheIITear/baileys-caller](https://github.com/SheIITear/baileys-caller). Its included WhatsApp Web engine assets have separate provenance; see [daemon/calling/ORIGIN.md](daemon/calling/ORIGIN.md) and the included calling source license before store submission.
+
+Image paste supports **Ctrl+V**, **Ctrl+Shift+V**, and **Shift+Insert**, including Omarchy's **Super+V** universal paste route. Attachments are previewed before sending.

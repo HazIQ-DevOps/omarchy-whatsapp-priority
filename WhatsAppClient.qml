@@ -36,6 +36,8 @@ Item {
   property int unread: 0
   property var me: null
   property string lastError: ""
+  property var callState: ({ phase: "idle", name: "", muted: false, error: "" })
+  readonly property bool callBusy: callState.phase !== "idle"
   property var chats: []
   property var attentionChats: []
   property int chatsEpoch: 0
@@ -101,6 +103,13 @@ Item {
     }
     return request(payload)
   }
+  function startCall(jid) { return request({ t: "startCall", jid: jid }) }
+  function dialCall(phone) { return request({ t: "startCall", phone: phone }) }
+  function answerCall() { return request({ t: "answerCall" }) }
+  function declineCall() { return request({ t: "declineCall" }) }
+  function hangupCall() { return request({ t: "hangupCall" }) }
+  function muteCall(muted) { return request({ t: "muteCall", muted: muted }) }
+  function dismissCallError() { return request({ t: "dismissCallError" }) }
   function markRead(jid) { request({ t: "read", jid: jid }) }
   function reconnectWhatsApp() { request({ t: "reconnect" }) }
   function logout() { request({ t: "logout" }) }
@@ -253,8 +262,13 @@ Item {
         if (frame.attentionChats !== undefined) root.attentionChats = frame.attentionChats || []
         root.me = frame.me || null
         root.lastError = frame.lastError || ""
+        if (frame.call !== undefined) root.callState = frame.call
         if (frame.chats !== undefined) root.setChats(frame.chats || [])
         if (root.linked) root.pendingLogin = false
+        break
+
+      case "callState":
+        root.callState = frame.call || ({ phase: "idle", name: "", error: "" })
         break
 
       case "chats":

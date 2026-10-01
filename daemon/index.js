@@ -33,6 +33,7 @@ import {
   muteExpiryDelayMs,
   shouldNotifyChat
 } from './lib/preferences.js'
+import { CallingManager } from './lib/calling.js'
 import { watchPluginState as observePluginState } from './lib/plugin-state.js'
 
 installSignalConsoleRedaction()
@@ -78,6 +79,20 @@ const bus = new Bus(socketPath)
 
 let sock = null
 let connection = 'idle'
+const calling = new CallingManager({
+  getSocket: () => connection === 'open' ? sock : null,
+  publish: frame => bus.broadcast(frame),
+  canonicalJid: jid => store.canonicalJid(jid),
+  nameFor: jid => store.displayName(jid),
+  diagnostic: (event, data) => {
+    if (event === 'signaling error') logger.warn({ event, ...data }, 'calling diagnostic')
+    else if (process.env.OMARCHY_WHATSAPP_CALL_DEBUG === '1') logger.info({ event, ...data }, 'calling diagnostic')
+  },
+  onIncoming: call => {
+    notifier.send('Incoming WhatsApp call', call.name, call.jid)
+    notifier.playSound()
+  }
+})
 let qrVersion = 0
 let hasQr = false
 let currentQrPng = ''
@@ -171,6 +186,7 @@ function state() {
     unread: store.totalUnread(),
     attentionChats: store.attentionChats(),
     lastError,
+    call: calling.state,
     daemonPid: process.pid
   }
 }
@@ -716,6 +732,7 @@ function cancelReconnect() {
 }
 
 function destroySocket(reason) {
+  calling.dispose(reason)
   const old = sock
   sock = null
   if (!old) return
@@ -839,6 +856,7 @@ async function connect() {
       if (next === 'open') {
         connecting = false
         connection = 'open'
+        calling.prepare().catch(err => logger.warn({ message: err.message }, 'incoming calling initialization failed'))
         needsLogin = false
         pairingWanted = false
         pairingStopped = false
@@ -869,6 +887,7 @@ async function connect() {
       }
 
       if (next === 'close') {
+        calling.dispose('WhatsApp disconnected')
         const statusCode = lastDisconnect?.error?.output?.statusCode
         lastError = lastDisconnect?.error?.message || ''
         connecting = false
@@ -1261,6 +1280,41 @@ function recordSentMessage(rawJid, sent) {
 async function handleCommand(payload, reply) {
   const { t, id } = payload
   switch (t) {
+    case 'prepareCall':
+      await calling.prepare()
+      reply({ t: 'ack', for: t, id, ok: true })
+      return
+    case 'startCall': {
+      const prefs = join(process.env.XDG_CONFIG_HOME || join(process.env.HOME, '.config'), 'omarchy/whatsapp-priority/recording-source')
+      let microphone = ''
+      try { microphone = readFileSync(prefs, 'utf8').trim() } catch {}
+      await calling.start({ jid: payload.jid, phone: payload.phone, microphone })
+      reply({ t: 'ack', for: t, id, ok: true })
+      return
+    }
+    case 'answerCall': {
+      const prefs = join(process.env.XDG_CONFIG_HOME || join(process.env.HOME, '.config'), 'omarchy/whatsapp-priority/recording-source')
+      let microphone = ''
+      try { microphone = readFileSync(prefs, 'utf8').trim() } catch {}
+      calling.answer(microphone)
+      reply({ t: 'ack', for: t, id, ok: true })
+      return
+    }
+    case 'declineCall':
+      calling.decline()
+      reply({ t: 'ack', for: t, id, ok: true })
+      return
+    case 'hangupCall':
+      calling.hangup()
+      reply({ t: 'ack', for: t, id, ok: true })
+      return
+    case 'muteCall':
+      calling.mute(payload.muted)
+      reply({ t: 'ack', for: t, id, ok: true })
+      return
+    case 'dismissCallError':
+      calling.dismiss()
+      return
     case 'hello':
       reply(snapshot())
       return

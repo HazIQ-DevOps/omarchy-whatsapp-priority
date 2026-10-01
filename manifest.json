@@ -2,12 +2,16 @@
   "schemaVersion": 1,
   "id": "io.github.ricky.whatsapp",
   "name": "WhatsApp",
-  "version": "1.2.12",
+  "version": "1.3.2",
   "author": "ricky",
   "license": "MIT",
-  "description": "WhatsApp for the Omarchy bar: notifications, chat actions, voice notes, media playback, and document downloads.",
-  "kinds": ["bar-widget"],
-  "entryPoints": { "barWidget": "BarWidget.qml" },
+  "description": "WhatsApp for the Omarchy bar: chats, media, voice notes, and experimental incoming and outgoing voice calls.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
   "barWidget": {
     "displayName": "WhatsApp",
     "category": "Communication",
@@ -26,16 +30,56 @@
       "webAppPattern": "web.whatsapp.com"
     },
     "schema": [
-      { "key": "socketPath", "type": "string", "label": "Daemon socket path (blank = default)" },
-      { "key": "autostartDaemon", "type": "bool", "label": "Start the daemon automatically" },
-      { "key": "showUnreadCount", "type": "bool", "label": "Show unread count next to the icon" },
-      { "key": "priorityName", "type": "string", "label": "Priority sender name (red while unread)" },
-      { "key": "recordingSource", "type": "string", "label": "Microphone source (blank = system default)" },
-      { "key": "hideWhenEmpty", "type": "bool", "label": "Hide the widget when there is nothing unread" },
-      { "key": "chatLimit", "type": "int", "label": "Chats listed in the panel" },
-      { "key": "messageLimit", "type": "int", "label": "Messages loaded per conversation" },
-      { "key": "webAppUrl", "type": "string", "label": "Full client URL" },
-      { "key": "webAppPattern", "type": "string", "label": "Window pattern used to focus the full client" }
+      {
+        "key": "socketPath",
+        "type": "string",
+        "label": "Daemon socket path (blank = default)"
+      },
+      {
+        "key": "autostartDaemon",
+        "type": "bool",
+        "label": "Start the daemon automatically"
+      },
+      {
+        "key": "showUnreadCount",
+        "type": "bool",
+        "label": "Show unread count next to the icon"
+      },
+      {
+        "key": "priorityName",
+        "type": "string",
+        "label": "Priority sender name (red while unread)"
+      },
+      {
+        "key": "recordingSource",
+        "type": "string",
+        "label": "Microphone source (blank = system default)"
+      },
+      {
+        "key": "hideWhenEmpty",
+        "type": "bool",
+        "label": "Hide the widget when there is nothing unread"
+      },
+      {
+        "key": "chatLimit",
+        "type": "int",
+        "label": "Chats listed in the panel"
+      },
+      {
+        "key": "messageLimit",
+        "type": "int",
+        "label": "Messages loaded per conversation"
+      },
+      {
+        "key": "webAppUrl",
+        "type": "string",
+        "label": "Full client URL"
+      },
+      {
+        "key": "webAppPattern",
+        "type": "string",
+        "label": "Window pattern used to focus the full client"
+      }
     ]
   }
 }

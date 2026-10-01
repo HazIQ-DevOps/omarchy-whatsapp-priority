@@ -4,7 +4,7 @@ This is a shareable build of the [WhatsApp plugin for Omarchy](https://github.co
 
 ## Install from GitHub
 
-You need Omarchy 4 (Quattro), Node.js 20 or newer, `qt6-multimedia`, and an internet connection for the daemon dependencies. Sending voice notes also needs `pipewire-audio` and `ffmpeg`. Copying received JPEG, WebP, or GIF images into other apps and generating thumbnails for previously downloaded videos also uses `ffmpeg`.
+You need Omarchy 4 (Quattro), Node.js 20 or newer, `qt6-multimedia`, and an internet connection for the daemon dependencies. Voice calls and sending voice notes also need `pipewire-audio` and `ffmpeg`. Copying received JPEG, WebP, or GIF images into other apps and generating thumbnails for previously downloaded videos also uses `ffmpeg`.
 
 Run this in a terminal:
 
@@ -39,7 +39,7 @@ Press `S` in the chat list, or click the gear, to open Settings. Enter **one** p
 
 Press `C` on a selected chat to clear its preview from this plugin until a newer message arrives or the shell restarts. This does **not** delete or mark the chat read in WhatsApp. Right-click the icon for the full WhatsApp Web client.
 
-In a conversation, press `Ctrl+V` to attach a copied PNG, JPEG, or WebP image (up to 12 MB). Check the preview, optionally type a caption, then press `Enter` or click Send. `Escape` or the × button removes the pending image without sending it. Plain text still pastes normally.
+In a conversation, press `Ctrl+V` (or Omarchy’s `Super+V`) to attach a copied PNG, JPEG, or WebP image (up to 12 MB). Check the preview, optionally type a caption, then press `Enter` or click Send. `Escape` or the × button removes the pending image without sending it. Plain text still pastes normally.
 
 You can also copy one local file in your file manager and press `Ctrl+V` in a chat. The filename appears before sending; add an optional caption and press Send. Other file types go as WhatsApp documents, up to 200 MB. `Escape` or × cancels the attachment.
 
@@ -53,6 +53,12 @@ The chat loads up to 200 locally stored messages. Click the magnifying glass in 
 Video bubbles and the local media grid show poster frames when WhatsApp supplies one or the video is already cached. Document bubbles and gallery tiles show type icons for archives, PDFs, spreadsheets, and other common files. Links sent in text get a WhatsApp preview when the linked website supplies metadata; a normal link is still sent if no preview is available.
 
 Click the copy icon at the top-right of a bubble to copy a text message or an image/sticker. An image downloads first if needed. Press `C` on a selected message for the same action. For an image with a caption, copy selects the image. The external-link icon in the header opens the full WhatsApp Web client.
+
+## Voice calls
+
+Highlight an individual contact and click the phone button, or use the phone button inside their chat. The contact's number is resolved automatically. The **#** button is only for manually dialing another number.
+
+Incoming voice calls display **Answer** and **Decline**. During a call, use the microphone button to mute/unmute or the phone button to hang up. Closing the panel keeps the call running. Microphone selection follows Settings; output follows the system default. Calls share your existing login and end after ten minutes. Video and group calls are unsupported.
 
 ## Privacy and provenance
 

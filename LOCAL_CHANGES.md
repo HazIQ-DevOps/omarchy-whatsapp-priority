@@ -27,3 +27,25 @@ This installation is based on [srineshr1/omarchy-whatsapp](https://github.com/sr
 - Original outgoing protobuf payloads are retained in a private, bounded retry cache so resends remain accurate across restarts. Offline tests cover real Signal encryption through an address change and restart, and exact retry payload preservation for text, quotes, images, reactions, edits, and revokes.
 
 The linked-device bridge, chat storage, and reply behavior remain from the upstream project.
+
+## 1.3.0 — Experimental outgoing voice calls
+
+- Attach the calling backend to the chat daemon's linked-device socket.
+- Add individual contact calls, a keyboard-enabled number dial field, and a
+  persistent call strip with duration, mute, and hang up.
+- Reuse microphone settings and play received audio through PipeWire.
+- Keep socket/login ownership with the chat bridge and initialize calls lazily.
+- Handle cancellation during startup and clean up call resources on disconnect.
+- Include source, compiled calling modules, bundled engine assets, provenance,
+  dependency lock, and regression tests.
+
+## 1.3.2 — Incoming calls and desktop paste compatibility
+
+- Keep the shared calling engine ready for incoming one-to-one voice offers.
+- Add caller details, Answer and Decline, notifications, and automatic panel opening.
+- Correct LID binary encoding and native offer-event handling.
+- Handle decline, hang-up, cancellation and answering on another device.
+- Clear microphone teardown errors and restore reply focus after calls.
+- Support image paste through Ctrl+V, Ctrl+Shift+V and Shift+Insert (Omarchy Super+V).
+- Make temporary calling diagnostics opt-in with OMARCHY_WHATSAPP_CALL_DEBUG=1.
+- The maintainer verified outgoing calls, receiving/pickup, mute, hang-up and decline on the local installation.

@@ -119,7 +119,7 @@ BarWidget {
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
-  visible: !root.hideWhenEmpty || root.unread > 0 || root.opened
+  visible: !root.hideWhenEmpty || root.unread > 0 || root.opened || client.callBusy
 
   onBarChanged: injectPanel()
   onSettingsChanged: injectPanel()
@@ -130,6 +130,9 @@ BarWidget {
     socketPath: root.setting("socketPath", "")
     autostartDaemon: root.setting("autostartDaemon", true) === true
     onFocusRequested: function (jid) { root.focusChat(jid) }
+    onCallStateChanged: {
+      if (callState.phase === "incoming" && panelLoader.item) panelLoader.item.open()
+    }
   }
 
   Loader {
@@ -160,10 +163,11 @@ BarWidget {
     bar: root.bar
     text: {
       var badge = Model.badgeText(root.unread)
+      if (client.callBusy) return root.glyphLinked + " \uf095"
       if (root.showCount && badge.length > 0) return root.glyphLinked + " " + badge
       return root.linked ? root.glyphLinked : root.glyphOffline
     }
-    active: root.unread > 0
+    active: root.unread > 0 || client.callBusy
     activeColor: root.priorityAlert ? "#e5484d" : "#25D366"
     dimmed: !root.linked
     tooltipText: ""
